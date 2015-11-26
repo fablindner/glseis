@@ -130,6 +130,8 @@ w_delay = 5
 t, c, b = plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
                             processor="adaptive", df=0.2, taper_fract=0.1)
 
+print('done')
+
 fig1 = plt.figure(1)
 ax1 = fig1.add_subplot(111)
 im1 = ax1.pcolormesh(t, c, b, cmap='YlGnBu_r')
