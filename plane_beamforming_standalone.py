@@ -1,23 +1,56 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io
+from obspy import read, Stream, UTCDateTime
 from preprocess import preprocess
 import warnings
 
 
-def plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
+def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
                       processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1):
+    """
+    This routine estimates the back azimuth and phase velocity of incoming waves
+    based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
+    Singular value decomposition is not implemented, yet.
 
-    data = preprocess(s, prepr, Fs, fc_min, fc_max, taper_fract)
-    # parameters ?
+    :type matr: numpy.ndarray
+    :param matr: time series of used stations (dim: [number of samples, number of stations])
+    :type scoord: numpy.ndarray
+    :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
+    :type prepr: integer
+    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
+    :type fmin, fmax: float
+    :param fmin, fmax: frequency range for which the beamforming result is calculated
+    :type Fs: float
+    :param Fs: sampling rate of data streams
+    :type w_length: float
+    :param w_length: length of sliding window in seconds. result is "averaged" over windows
+    :type w_delay: float
+    :param w_delay: delay of sliding window in seconds with respect to previous window
+    :type processor: string
+    :param processor: processor used to match the cross-spectral-density matrix to the
+        replica vecotr. see Corciulo et al., 2012
+    :type df: float
+    :param df: frequency step between fmin and fmax
+    :type fc_min, fc_max: float
+    :param fc_min, fc_max: corner frequencies used for preprocessing
+    :type taper_fract: float
+    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+
+    :return: three numpy arrays:
+        teta: back azimuth (dim: [number of bazs, 1])
+        c: phase velocity (dim: [number of cs, 1])
+        beamformer (dim: [number of bazs, number of cs])
+    """
+
+    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    # select a data chunk
     data_chunk = 200
-    
+    data = data[data_chunk * 500: 2 * data_chunk * 500, :]
+
     # grid for search over backazimuth and apparent velocity
     teta = np.arange(0, 365, 5) + 180
     c = np.arange(800, 4200, 200)
-    
-    data = data[data_chunk * 500: 2 * data_chunk * 500, :]
-    
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
@@ -25,8 +58,8 @@ def plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     # construct analysis frequencies
     indice_freq = np.arange(fmin, fmax+df, df)
     # construct analysis window for entire hour and delay
-    interval = np.arange(0, w_length * Fs)
-    delay = w_delay * Fs
+    interval = np.arange(0, int(w_length * Fs))
+    delay = int(w_delay * Fs)
     # number of analysis windows ('shots')
     numero_shots = np.floor((Nombre - len(interval)) / delay) + 1
     
@@ -61,6 +94,7 @@ def plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     # loop over frequencies
     for ll in range(len(indice_freq)):
         # calculate cross-spectral density matrix
+        # dim: [number of stations X number of stations]
         if numero == 1:
             K = np.dot(vect_data_adaptive[ll, :, :].conj().T, vect_data_adaptive[ll, :, :])
         else:
@@ -92,25 +126,64 @@ def plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
                     beamformer[bb, cc] += abs(np.dot(replica.conj().T, replica) \
                                               / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
                 else:
-                    raise ValueError("Processor '%s' not found" % processor)
+                    raise ValueError("No processor called '%s'" % processor)
     teta -= 180
     return teta, c, beamformer.T
 
 
-# import .mat data
-mat = scipy.io.loadmat("/home/flindner/Beamforming/greenland_data10.mat")
-s = mat["s"][0, 0]  # array of subarrays -> index 0 = data matrix, ...
-# station ids
-statid = np.arange(0, 8)
-# number of sensors
-Nstats = len(statid)
-# sampling frequency
-Fs = s[2][0][0]
-# station UTM coordinates - easting and northing
-scoord = s[4][statid, :2]
+
+
+# specify type of data (.mat or .mseed)
+ff = "mat"
+path = '/scratch/flindner/Data/Instaseis/1src_far/'
+
+if ff == "mseed":
+    # stationlist
+    stnlist = ["ULMU0", "ULMU1", "ULMU2", "ULMU3", "UD01", "UD03", "UD08"]
+    # channel
+    chn = "BHZ"
+    # start and endtime
+    sti = UTCDateTime(2014, 1, 1, 1)
+    eti = UTCDateTime(2014, 1, 1, 11)
+    # read data
+    st = Stream()
+    for stn in stnlist:
+        add = read(path + stn + "_syn_noise.mseed", starttime=sti, endtime=eti)
+        new = add.select(channel=chn)
+        st += new
+    # check if starttimes and sampling rates are identical
+    Nstats = len(stnlist)
+    matr = np.zeros((len(st[0].data), Nstats))
+    for i, tr in enumerate(st):
+        if tr.stats.starttime != st[0].stats.starttime:
+            raise ValueError("different sampling rates!!!")
+        if tr.stats.starttime != st[0].stats.starttime:
+            raise ValueError("different starttimes!!!")
+        if tr.stats.npts != st[0].stats.npts:
+            raise ValueError("different number of data points!!!")
+        matr[:, i] = tr.data
+    Fs = st[0].stats.sampling_rate
+    scoord = np.loadtxt(path + "scoords.txt", usecols=(3,4), unpack=True)
+    scoord = scoord.T
+        
+
+elif ff == "mat":
+    # import .mat data
+    mat = scipy.io.loadmat("/home/flindner/Beamforming/greenland_data10.mat")
+    s = mat["s"][0, 0]  # array of subarrays -> index 0 = data matrix, ...
+    # data
+    matr = s[0]
+    # station ids
+    statid = s[1] 
+    # number of sensors
+    Nstats = len(statid)
+    # sampling frequency
+    Fs = s[2][0][0]
+    # station UTM coordinates - easting and northing
+    scoord = s[4][0:len(statid), :2]
 
 # Preprocessing: 0 (none), 1 (bandpass filter), 2 (prewhitening)
-prepr = 2
+prepr = 0
 
 # interval for whitening
 fc_min = 1
@@ -127,10 +200,9 @@ w_delay = 5
 # get data and apply preprocessing
 
 
-t, c, b = plwave_beamformer(s, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
-                            processor="adaptive", df=0.2, taper_fract=0.1)
+t, c, b = plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
+                            processor="bartlett", df=0.2, taper_fract=0.1)
 
-print('done')
 
 fig1 = plt.figure(1)
 ax1 = fig1.add_subplot(111)
