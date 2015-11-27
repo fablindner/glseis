@@ -1,7 +1,6 @@
 from scipy import signal
 import numpy as np
 import scipy.io
-from preprocess import preprocess
 import warnings
 
 
@@ -77,7 +76,7 @@ def preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract):
         # normalize it by maximum energy
         fact = np.sqrt(np.dot(np.ones((data.shape[0], 1)), np.sum(data**2, axis=0).reshape((1, data.shape[1]))))
         data = np.divide(data, fact)
-   return data
+    return data
 
 
 def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
@@ -121,6 +120,8 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     # select a data chunk
     data_chunk = 200
     data = data[data_chunk * 500: 2 * data_chunk * 500, :]
+    # number of stations
+    n_stats = data.shape[1]
 
     # grid for search over backazimuth and apparent velocity
     teta = np.arange(0, 365, 5) + 180
@@ -139,7 +140,7 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     
     # initialize data steering vector:
     # dim: [number of frequencies, number of stations, number of analysis windows]
-    vect_data_adaptive = np.zeros((len(indice_freq), Nstats, numero_shots), dtype=np.complex)
+    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
     
     # initialize beamformer
     # dim: [number baz, number app. vel.]
@@ -150,7 +151,7 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
 
     # loop over stations
-    for ii in range(Nstats):
+    for ii in range(n_stats):
         toto = data[:, ii]
         # now loop over shots
         numero = 0
@@ -174,7 +175,7 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
         else:
             K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
     
-        if np.linalg.matrix_rank(K) < Nstats:
+        if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
     
         K_inv = np.linalg.inv(K)
