@@ -80,7 +80,7 @@ def preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract):
 
 
 def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
-                      processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1):
+                      processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -109,6 +109,8 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     :param fc_min, fc_max: corner frequencies used for preprocessing
     :type taper_fract: float
     :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+    :type norm: boolean
+    :param norm: if True (default), beam power is normalized
 
     :return: three numpy arrays:
         teta: back azimuth (dim: [number of bazs, 1])
@@ -177,6 +179,10 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+
+        if norm:
+            K /= np.linalg.norm(K)
+
     
         K_inv = np.linalg.inv(K)
     
@@ -202,5 +208,145 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
                                               / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
                 else:
                     raise ValueError("No processor called '%s'" % processor)
+    beamformer /= indice_freq.size
     teta -= 180
     return teta, c, beamformer.T
+
+
+def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, prepr, fmin, fmax, fc_min, fc_max, Fs,
+                            w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, norm=True):
+    """
+    This routine estimates the back azimuth and phase velocity of incoming waves
+    based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
+    Singular value decomposition is not implemented, yet.
+
+    :type matr: numpy.ndarray
+    :param matr: time series of used stations (dim: [number of samples, number of stations])
+    :type scoord: numpy.ndarray
+    :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
+    :type xmax, ymax: float
+    :param xmax, ymax: spatial grid search: grid ranges from x - xmax to x + xmax and
+        y - ymax to y + ymax, where (x,y) are the coordinates of first station (scoord[0, :])
+    :type dx, dy: float
+    :param dx, dy: grid resolution; increment from x - xmax to x + xmax and y - ymax to y + ymax,
+        respectively. (x,y) are the coordinates of the first station (scoord[0, :])
+    :type prepr: integer
+    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
+    :type fmin, fmax: float
+    :param fmin, fmax: frequency range for which the beamforming result is calculated
+    :type fc_min, fc_max: float
+    :param fc_min, fc_max: corner frequencies used for preprocessing
+    :type Fs: float
+    :param Fs: sampling rate of data streams
+    :type w_length: float
+    :param w_length: length of sliding window in seconds. result is "averaged" over windows
+    :type w_delay: float
+    :param w_delay: delay of sliding window in seconds with respect to previous window
+    :type processor: string
+    :param processor: processor used to match the cross-spectral-density matrix to the
+        replica vecotr. see Corciulo et al., 2012
+    :type df: float
+    :param df: frequency step between fmin and fmax
+    :type taper_fract: float
+    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+    :type norm: boolean
+    :param norm: if True (default), beam power is normalized
+
+    :return: four numpy arrays:
+        xcoord: grid coordinates in x-direction (dim: [number x-grid points, 1])
+        ycoord: grid coordinates in y-direction (dim: [number y-grid points, 1])
+        c: phase velocity (dim: [number of cs, 1])
+        beamformer (dim: [number y-grid points, number x-grid points, number cs])
+    """
+
+    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    # number of stations
+    n_stats = data.shape[1]
+
+    # grid for search over location and apparent velocity
+    xcoord = np.arange(-xmax, xmax + dx, dx) + scoord[0, 0]
+    ycoord = np.arange(-ymax, ymax + dy, dy) + scoord[0, 1]
+    c = np.arange(1000, 3000, 100)
+    # extract number of data points
+    Nombre = data[:, 1].size
+    # construct time window
+    time = np.arange(0, Nombre) / Fs
+    # construct analysis frequencies
+    indice_freq = np.arange(fmin, fmax+df, df)
+    # construct analysis window for entire hour and delay
+    interval = np.arange(0, int(w_length * Fs))
+    delay = int(w_delay * Fs)
+    # number of analysis windows ('shots')
+    numero_shots = np.floor((Nombre - len(interval)) / delay) + 1
+
+    # initialize data steering vector:
+    # dim: [number of frequencies, number of stations, number of analysis windows]
+    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
+
+    # initialize beamformer
+    # dim: [number xcoord, number ycoord, number app. vel.]
+    beamformer = np.zeros((len(ycoord), len(xcoord), len(c)))
+
+    # construct matrix for DFT calculation
+    # dim: [number time points, number frequencies]
+    matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+
+    # loop over stations
+    for ii in range(n_stats):
+        toto = data[:, ii]
+        # now loop over shots
+        numero = 0
+        while (numero * delay + len(interval)) < len(toto):
+            # calculate DFT
+            # dim: [number frequencies]
+            adjust = np.dot(toto[numero * delay + interval][:, None], np.ones((1, len(indice_freq))))
+            test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
+            # fill data steering vector: ii'th station, numero'th shot.
+            # normalize in order not to bias strongest seismogram.
+            # dim: [number frequencies, number stations, number shots]
+            vect_data_adaptive[:, ii, numero] = (test / abs(test)).conj().T
+            numero += 1
+
+    # loop over frequencies
+    for ll in range(len(indice_freq)):
+        # calculate cross-spectral density matrix
+        # dim: [number of stations X number of stations]
+        if numero == 1:
+            K = np.dot(vect_data_adaptive[ll, :, :].conj().T, vect_data_adaptive[ll, :, :])
+        else:
+            K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
+
+        if np.linalg.matrix_rank(K) < n_stats:
+            warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+
+        if norm:
+            K /= np.linalg.norm(K)
+
+
+        K_inv = np.linalg.inv(K)
+
+        # loop over spatial grid
+        for yy in range(len(ycoord)):
+            for xx in range(len(xcoord)):
+                # loop over apparent velocity
+                for cc in range(len(c)):
+
+                    # define and normalize replica vector (neglect amplitude information)
+                    omega = np.exp(-1j * np.sqrt((scoord[:, 0] - xcoord[xx])**2 + (scoord[:, 1] - ycoord[yy])**2) \
+                                   * 2. * np.pi * indice_freq[ll] / c[cc])
+                    omega /= np.linalg.norm(omega)
+
+                    # calculate processors and save results
+                    replica = omega[:, None]
+                    # bartlett
+                    if processor == "bartlett":
+                        beamformer[yy, xx, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
+                    # adaptive - Note that replica.conj().T * replica = 1. + 0j
+                    elif processor == "adaptive":
+                        beamformer[yy, xx, cc] += abs(np.dot(replica.conj().T, replica) \
+                                                   / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
+                    else:
+                        raise ValueError("No processor called '%s'" % processor)
+
+    beamformer /= indice_freq.size
+    return xcoord, ycoord, c, beamformer
