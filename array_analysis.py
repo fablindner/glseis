@@ -213,8 +213,8 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     return teta, c, beamformer.T
 
 
-def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, prepr, fmin, fmax, fc_min, fc_max, Fs,
-                            w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, norm=True):
+def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, prepr, fmin, fmax, fc_min, fc_max,
+                            Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -230,6 +230,10 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, prepr, fmin, fmax,
     :type dx, dy: float
     :param dx, dy: grid resolution; increment from x - xmax to x + xmax and y - ymax to y + ymax,
         respectively. (x,y) are the coordinates of the first station (scoord[0, :])
+    :type cmin, cmax: float
+    :param cmin, cmax: velocity interval used to calculate replica vector
+    :type dc: float
+    :param dc: velocity step used to calculate replica vector
     :type prepr: integer
     :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
@@ -266,7 +270,7 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, prepr, fmin, fmax,
     # grid for search over location and apparent velocity
     xcoord = np.arange(-xmax, xmax + dx, dx) + scoord[0, 0]
     ycoord = np.arange(-ymax, ymax + dy, dy) + scoord[0, 1]
-    c = np.arange(1000, 3000, 100)
+    c = np.arange(cmin, cmax + dc, dc)
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
