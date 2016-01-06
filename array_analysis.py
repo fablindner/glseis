@@ -213,8 +213,39 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     return teta, c, beamformer.T
 
 
+def annul_dominant_interferers(CSDM, neig, data):
+    """
+    This routine cancels the strong interferers from the data by projecting the
+    dominant eigenvectors of the cross-spectral-density matrix out of the data.
+    :type CSDM: numpy.ndarray
+    :param CSDM: cross-spectral-density matrix obtained from the data.
+    :type neig: integer
+    :param neig: number of dominant CSDM eigenvectors to annul from the data.
+    :type data: numpy.ndarray
+    :param data: the data which was used to calculate the CSDM. The projector is
+        applied to it in order to cancel the strongest interferer.
+
+    :return: numpy.ndarray
+        csdm: the new cross-spectral-density matrix calculated from the data after
+        the projector was applied to eliminate the strongest source.
+    """
+
+    # perform singular value decomposition to CSDM matrix
+    u, s, vT = np.linalg.svd(CSDM)
+    # chose only neig strongest eigenvectors
+    u_m = u[:, :neig]   # columns are eigenvectors
+    v_m = vT[:neig, :]  # rows (!) are eigenvectors
+    # set-up projector
+    proj = np.identity(CSDM.shape[0]) - np.dot(u_m, v_m)
+    # apply projector to data - project largest eigenvectors out of data
+    data = np.dot(proj, data)
+    # calculate projected cross spectral density matrix
+    csdm = np.dot(data, data.conj().T)
+    return csdm
+
+
 def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, prepr, fmin, fmax, fc_min, fc_max,
-                            Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, norm=True):
+                            Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -253,6 +284,9 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
     :param df: frequency step between fmin and fmax
     :type taper_fract: float
     :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+    :type neig: integer
+    :param neig: number of dominant CSDM eigenvectors to annul from the data.
+        enables to suppress strong sources.
     :type norm: boolean
     :param norm: if True (default), beam power is normalized
 
@@ -323,6 +357,10 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
 
+        # annul dominant source 
+        if neig > 0:
+            K = annul_dominant_interferers(K, neig, vect_data_adaptive[ll, :, :])
+
         if norm:
             K /= np.linalg.norm(K)
 
@@ -354,3 +392,6 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
 
     beamformer /= indice_freq.size
     return xcoord, ycoord, c, beamformer
+
+
+
