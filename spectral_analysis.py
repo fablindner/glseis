@@ -1,7 +1,10 @@
 from obspy import read, Stream
 import numpy as np
 from obspy.signal import PPSD
+import matplotlib.pyplot as plt
 from matplotlib import mlab
+import matplotlib.dates as mdates
+import datetime as dtime
 import warnings
 
 
@@ -36,7 +39,7 @@ class spectral_analysis():
         self.chn = chn
         self.paz = paz
         self.dec_fact = dec_fact
-
+        
 
     def ppsd(self, fmin=1., fmax=100.):
         """
@@ -72,7 +75,7 @@ class spectral_analysis():
         inst.plot(show_noise_models=False, period_lim=(1./fmax, 1./fmin))
 
 
-    def spectrogram(self, nfft, overlap, starttime=None, endtime=None):
+    def spectrogram(self, nfft, overlap, fmin=1, fmax=50, starttime=None, endtime=None, show=True):
         """
         This routine computes spectrograms of all files contained in 'filist'.
         The number of returned spectrograms may differ from the number of files
@@ -83,6 +86,15 @@ class spectral_analysis():
             mlab.specgram documentation
         :type overlap: float
         :param overlap: overlap between the nfft length segments in percent
+        :type starttime: obspy UTCDateTime
+        :param starttime: if given, data is trimmed. Works only if endtime is also
+            specified
+        :type endtime: obspy UTCDateTime
+        :param endtime: if given, data is trimmed. Works only if starttime is also
+            specified
+        :type return_results: boolean
+        :param return_results: If True, times, fruencies and spectrogram are returned.
+            Otherwise they are stored hand can be plotted with the function 'plot_specgram'
 
         :return: list, np.array, list
             1. list contains arrays of timestamps corresponding to the spectrograms
@@ -156,4 +168,32 @@ class spectral_analysis():
             specs.append(spectrogram)
             times.append(time)
 
-        return times, freqs, specs
+        if show:
+            # for plotting proper timestring
+            dateconv = np.vectorize(dtime.datetime.utcfromtimestamp)
+            xfmt = mdates.DateFormatter("%m-%d")
+            # initialize arrays for min and max values of all spectrogram
+            mins = np.zeros(len(specs))
+            maxs = np.zeros(len(specs))
+            # convert spectrograms to dB scale and obtain min and max values
+            for ii in range(len(specs)):
+                specs[ii] = 10*np.log10(specs[ii])
+                mins, maxs = specs[ii].min(), specs[ii].max()
+                times[ii] = dateconv(times[ii])
+            absmin = mins.min()
+            absmax = maxs.max()
+            # create figure
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            for ii in range(len(specs)):
+                im = ax.pcolormesh(times[ii], freqs, specs[ii], cmap="jet", vmin=absmin, vmax=absmax)
+            ax.set_ylim(fmin, fmax)
+            ax.set_xlim(times[0][0], times[-1][-1])
+            ax.set_ylabel("Frequency (Hz)")
+            ax.xaxis.set_major_formatter(xfmt)
+            cbar = fig.colorbar(im)
+            cbar.set_label("Power (dB)")
+            ax.set_title("%s..%s" % (self.stn, self.chn))
+            plt.show()
+        else:
+            return times, freqs, specs
