@@ -1,4 +1,4 @@
-from obspy import read, Stream
+from obspy import read, UTCDateTime, Stream, Trace
 import numpy as np
 from obspy.signal import PPSD
 import matplotlib.pyplot as plt
@@ -6,6 +6,47 @@ from matplotlib import mlab
 import matplotlib.dates as mdates
 import datetime as dtime
 import warnings
+import numpy.ma as ma
+import sys
+
+
+def medianPSD(stream, win_len, overlap, t1, t2):
+    """
+    Calculates the median PSD of data contained in stream. Single PSDs are calculated
+    from overlapping windows of length 'win_len'.
+
+    :type stream: ObsPy stream object. Must contain exactly on Trace
+    :param stream: ObsPy stream that contains data to process and stats information
+    :type win_len: float
+    :param win_len: window length in seconds used for calculating single PSDs
+    :type overlap: float
+    :param overlap: overlap of sliding window in percent
+    :type t1, t2: ObsPy UTCDateTime
+    :param t1, t2: starttime and entime of the window of consideration. The timestamp
+        returned is t1 + (t2 - t1) / 2.
+    :rtype: numpy array; numpy array; float
+    :return: frequency vector to median PSD; median PSD; ObsPy timestamp corresponting
+        to stime + (etime - stime) / 2, where stime and etime are the starttime and
+        endtime of the stream, respectivley
+    """
+    dt = stream[0].stats.delta
+    fs = stream[0].stats.sampling_rate
+    start = stream[0].stats.starttime 
+    end = stream[0].stats.endtime
+    nfft = int(win_len * fs)
+    while start < end - win_len:
+        part = stream.slice(start, start + win_len - dt)
+        data = part[0].data
+        pxx, freq = mlab.psd(x=data, NFFT=nfft, pad_to=nfft, Fs=fs, scale_by_freq=True)
+        pxx = pxx[:, None]
+        if start == stream[0].stats.starttime:
+            psds = pxx
+        else:
+            psds = np.concatenate((psds, pxx), axis=-1)
+        start += overlap * win_len
+    median = np.median(psds, axis=-1)
+    timestamp = (t1 + (t2 - t1) / 2.).timestamp
+    return freq, median, timestamp
 
 
 class spectral_analysis():
@@ -197,3 +238,172 @@ class spectral_analysis():
             plt.show()
         else:
             return times, freqs, specs
+
+
+class tremor():
+    """
+    Class to calculate and save tremor amplitude as described in Bartholomaus et al., 2015
+    """
+    def __init__(self, stn, chn, win_long, win_short, overlap, fmin, fmax, t1, t2, ts=None, Vs=None, errors=None):
+        """
+        Initialize class tremor.
+
+        :type stn: string
+        :param stn: station
+        :type chn: string
+        :param chn: channel
+        :type win_long: float
+        :param win_long: window length for which a single MGV value is calculated
+        :type win_short: float
+        :param win_short: window length used to calculate a median PSD
+        :type overlap: float
+        :param overlap: overlap of sliding windows. applies to win_long and win_short
+        :type fmin, fmax: float
+        :param fmin, fmax: frequency range for MGV values have been calculated
+        :type t1, t2: obspy UTCDateTime object
+        :param t1, t2: start- and endtime of interval of consideration. t1 (t2) should be
+            00:00 - win_long / 2 (t1 + 24h + win_long / 2)
+        :param ts: empty field for tremor amplitudes' timestamps
+        :param Vs: empty field for tremor amplitudes
+        :param errors: empty field for matrix containing error-prone values
+
+        """
+
+        self.stn = stn
+        self.chn = chn
+        self.win_long = win_long
+        self.win_short = win_short
+        self.overlap = overlap
+        self.fmin = fmin
+        self.fmax = fmax
+        self.t1 = t1
+        self.t2 = t2
+
+
+    def tremor_amplitude(self, st):
+        """
+        Function to compute the tremor amplitude (Bartholomaus et al, 2015) in a given frequency
+            band. Is expected to process one day at a time only.
+
+        :type st: obspy stream object
+        :param st: Stream that contains on trace of data
+
+        :return: None
+            Stores tremor amplitudes and corresponding timestamps.
+        """
+
+        # initalize for while loop
+        t = self.t1
+        Vs = []
+        ts = []
+        err_ts = []
+        err_Vs = []
+        count = 0
+        # apply sliding window to data stream and calculate median PSDs
+        while t < self.t2 - self.win_long + 1:
+            try:
+                # slice window of length win_long
+                endtime = t + self.win_long
+                piece = st.slice(t, endtime)
+                # provoke error if there is no trace in stream
+                provoke = piece[0].stats.starttime
+            except:
+                # if no data, go on to next window
+                print("No data for %s - %s" % (t, t + self.win_long))
+                t += self.win_long * self.overlap
+                continue
+            # calculate median PSD
+            freq, median, timestamp = medianPSD(piece, self.win_short, self.overlap, t, endtime)
+            # obtain indices of frequency band of interest
+            ind = np.where((freq >= self.fmin) & (freq <= self.fmax))
+            # discard all other frequencies
+            median_freqband = median[ind]
+            # integrate over this frequency band and take square root. see bartholomaus et al., 2015
+            df = freq[1] - freq[0]
+            V = np.sqrt(np.sum(median_freqband * df))
+            # append values to list
+            Vs.append(V)
+            ts.append(timestamp)
+            # if data is masked, append corresponding indice. these values might be error-prone
+            if ma.is_masked(piece[0].data):
+                err_ts.append(timestamp)
+                err_Vs.append(V)
+            t += self.win_long * self.overlap
+            # increase counter - this is equal to the indice of the current value pair (ts, Vs)
+            count += 1
+
+        # convert values from lists to arrays
+        ts = np.asarray(ts)
+        Vs = np.asarray(Vs)
+        # create matrix containing potentially error-prone values
+        if len(err_ts) > 0:
+            err_ts = np.asarray(err_ts)
+            err_Vs = np.asarray(err_Vs)
+            errors = np.zeros((err_ts.size, 2))
+            errors[:, 0] = err_ts
+            errors[:, 1] = err_Vs
+        else:
+            errors = None
+
+        self.ts = ts
+        self.Vs = Vs
+        self.errors = errors
+
+
+    def write_data(self, path):
+        """
+        Writes median ground velocity values as ObsPy stream files. Timestamps and
+        corresponting values are expected to span a full day. First sample shout be
+        at 00:00 and last sample at 00:00 (+1day) - win_long / 2.
+
+        :type path: string
+        :param path: data path where output is written to
+    
+        :return: None
+            Writes data and a file containing potentially incorrect values (due to
+            data gaps) to the given path/directory.
+        """
+
+        # create empty stream
+        mgv = Stream()
+        # detect gaps is data
+        # number of traces, starting indice is stored
+        ntr = [0]
+        for i in range(self.ts.size - 1):
+            # gap if time between timestamps is greater (win_long * overlap)
+            if self.ts[i+1] - self.ts[i] > (self.win_long * self.overlap):
+                # append starting indice of new trace
+                ntr.append(i)
+        # get data for single traces
+        for n in range(len(ntr)):
+            # just one trace
+            if len(ntr) == 1:
+                data = self.Vs
+                time = self.ts
+            # last trace
+            elif n == len(ntr) - 1:
+                data = self.Vs[ntr[n]:]
+                time = self.ts[ntr[n]:]
+            # every other case
+            else:
+                data = self.Vs[ntr[n]: ntr[n+1]]
+                time = self.ts[ntr[n]: ntr[n+1]]
+            # create new trace and add data
+            new = Trace(data=data)
+            new.stats.starttime = UTCDateTime(time[0])
+            new.stats.delta = time[1] - time[0]
+            mgv += new
+        # add stats to traces
+        for i, tr in enumerate(mgv):
+            tr.stats.network = "4D"
+            tr.stats.station = self.stn
+            tr.stats.channel = self.chn
+        # obtain julian day
+        julday = UTCDateTime(self.ts[0]).julday
+        # write data
+        mgv.write(path + "MGV.%s.%s.%03d_%.1f-%.1fHz.mseed" % (self.stn, self.chn, julday, self.fmin, self.fmax), format="MSEED")
+        # write file containing errorneous data points. These values have been computed form data containing gaps
+        if self.errors is not None:
+            hdr = "Potentially incorrect values (timestamp, MGV value) due to \
+                   data gaps in the window associated to the timestamps below"
+            np.savetxt(path + "MGV_errval_%s.%s.%03d_%.1f-%.1fHz" % (self.stn, self.chn, julday, self.fmin, self.fmax), self.errors, header=hdr)
