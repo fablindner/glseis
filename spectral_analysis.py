@@ -280,13 +280,15 @@ class tremor():
         self.t2 = t2
 
 
-    def tremor_amplitude(self, st):
+    def tremor_amplitude(self, st, skip_gaps=True):
         """
         Function to compute the tremor amplitude (Bartholomaus et al, 2015) in a given frequency
             band. Is expected to process one day at a time only.
 
         :type st: obspy stream object
         :param st: Stream that contains on trace of data
+        :type skip_gaps: boolean
+        :param skip_gaps: skips win_longs which have gaps or are smaller win_long / 2.
 
         :return: None
             Stores tremor amplitudes and corresponding timestamps.
@@ -301,10 +303,18 @@ class tremor():
         count = 0
         # apply sliding window to data stream and calculate median PSDs
         while t < self.t2 - self.win_long + 1:
+            # assume there is no gap
+            gap = False
             try:
                 # slice window of length win_long
                 endtime = t + self.win_long
                 piece = st.slice(t, endtime)
+                # detect gaps
+                if ma.is_masked(piece[0].data):
+                    gap = True
+                # detect chunks shorter than win_long / 2.
+                if piece[0].data.size < ((self.win_long / 2.) * piece[0].stats.sampling_rate):
+                    gap = True
                 # provoke error if there is no trace in stream
                 provoke = piece[0].stats.starttime
             except:
@@ -312,20 +322,22 @@ class tremor():
                 print("No data for %s - %s" % (t, t + self.win_long))
                 t += self.win_long * self.overlap
                 continue
-            # calculate median PSD
-            freq, median, timestamp = medianPSD(piece, self.win_short, self.overlap, t, endtime)
-            # obtain indices of frequency band of interest
-            ind = np.where((freq >= self.fmin) & (freq <= self.fmax))
-            # discard all other frequencies
-            median_freqband = median[ind]
-            # integrate over this frequency band and take square root. see bartholomaus et al., 2015
-            df = freq[1] - freq[0]
-            V = np.sqrt(np.sum(median_freqband * df))
-            # append values to list
-            Vs.append(V)
-            ts.append(timestamp)
-            # if data is masked, append corresponding indice. these values might be error-prone
-            if ma.is_masked(piece[0].data):
+            # if gap and skip_gaps are True, skip calculation
+            if gap == True and skip_gaps == True:
+                pass 
+            else:
+                # calculate median PSD
+                freq, median, timestamp = medianPSD(piece, self.win_short, self.overlap, t, endtime)
+                # obtain indices of frequency band of interest
+                ind = np.where((freq >= self.fmin) & (freq <= self.fmax))
+                # discard all other frequencies
+                median_freqband = median[ind]
+                # integrate over this frequency band and take square root. see bartholomaus et al., 2015
+                df = freq[1] - freq[0]
+                V = np.sqrt(np.sum(median_freqband * df))
+                # append values to list
+                Vs.append(V)
+                ts.append(timestamp)
                 err_ts.append(timestamp)
                 err_Vs.append(V)
             t += self.win_long * self.overlap
