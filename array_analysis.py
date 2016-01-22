@@ -1,5 +1,6 @@
 from scipy import signal
 import numpy as np
+import matplotlib.pyplot as plt
 import scipy.io
 import warnings
 
@@ -77,6 +78,68 @@ def preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract):
         fact = np.sqrt(np.dot(np.ones((data.shape[0], 1)), np.sum(data**2, axis=0).reshape((1, data.shape[1]))))
         data = np.divide(data, fact)
     return data
+
+
+def transfer_function(u, freq, easting, northing, elevation):
+    """
+    Function to calculate the response of an array.
+    :type u: numpy.array
+    :param u: array containing slowness values of consideration
+    :type freq: float
+    :param freq: frequency for which the array response is calculated
+    :type easting: numpy.array
+    :param easting: coordinates of stations in x-direction in meters
+    :type northing: numpy.array
+    :param northing: coordinates of stations in y-direction in meters
+    :type elevation: numpy.array
+    :param elevation: elevation of stations 
+
+    """
+    # array coordinate mean as array reference point
+    meanarrayeast = np.mean(easting)
+    meanarraynorth = np.mean(northing)
+    # distance statations to reference point
+    x = np.zeros(easting.size)
+    y = np.zeros(northing.size)
+    for i in range(northing.size):
+        x[i] = (easting[i] - meanarrayeast) / 1000.
+        y[i] = (northing[i] - meanarraynorth) / 1000.
+
+    theo_backazi = np.radians(np.arange(0, 361, 1))
+    theo_backazi = theo_backazi[:, None]
+    # transfer function of input array geometry 2D
+    nstats = x.shape
+    beamres = np.zeros((theo_backazi.size, u.size))
+    R = np.ones((nstats[0], nstats[0]))
+    for vel in range(len(u)):
+        kx =  np.cos(theo_backazi) * u[vel]
+        ky =  np.sin(theo_backazi) * u[vel]
+        e_steer = np.exp(1j * 2. * np.pi * freq * (kx * x + ky * y))
+        w = e_steer
+        wT = w.T.copy()
+        beamres[:, vel] = (1. / nstats[0]**2) * abs((np.conjugate(w) * np.dot(R, wT).T).sum(1))
+
+    # plotting
+    fig = plt.figure()
+    ax_array = fig.add_subplot(211)
+    elev = ax_array.scatter(easting-meanarrayeast, northing-meanarraynorth, c=elevation,
+            s=150, marker="^", vmin=elevation.min(), vmax=elevation.max())
+    ax_array.set_xlabel("Easting [m] rel. to array center")
+    ax_array.set_ylabel("Northing [m] rel. to array center")
+    ax_array.set_title("Array Configuration")
+    cbar_array = plt.colorbar(elev)
+    cbar_array.set_label("Elevation (m)")
+    ax = fig.add_subplot(212, projection='polar')
+    theo_backazi = theo_backazi[:, 0]
+    CONTF = ax.contourf((theo_backazi), u, beamres.T, 100, cmap='jet', antialiased=True, linstyles='dotted')
+    ax.set_rmax(u[-1])
+    cbar = plt.colorbar(CONTF)
+    cbar.set_label('Rel. Power')
+    ax.grid(True)
+    ax.text(np.radians(32), u.max() + 0.01, 's/km', color='k')
+    ax.set_title('Array Response Function, f=%.1f Hz' % freq)
+    plt.tight_layout()
+    plt.show()
 
 
 def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay,
