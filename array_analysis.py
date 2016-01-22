@@ -79,7 +79,7 @@ def preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract):
     return data
 
 
-def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
+def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay,
                       processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
@@ -90,6 +90,10 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
+    :type smin, smax: float
+    :param smin, smax: slowness interval used to calculate replica vector
+    :type ds: float
+    :param ds: slowness step used to calculate replica vector
     :type prepr: integer
     :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
@@ -119,15 +123,12 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     """
 
     data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
-    # select a data chunk
-    data_chunk = 200
-    data = data[data_chunk * 500: 2 * data_chunk * 500, :]
     # number of stations
     n_stats = data.shape[1]
 
     # grid for search over backazimuth and apparent velocity
-    teta = np.arange(0, 365, 5) + 180
-    c = np.arange(800, 4200, 200)
+    teta = np.arange(0, 361, 1) + 180
+    s = np.arange(smin, smax + ds, ds) / 1000.
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
@@ -146,7 +147,7 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
     
     # initialize beamformer
     # dim: [number baz, number app. vel.]
-    beamformer = np.zeros((len(teta), len(c)))
+    beamformer = np.zeros((len(teta), len(s)))
     
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
@@ -189,12 +190,12 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
         # loop over backazimuth
         for bb in range(len(teta)):
             # loop over apparent velocity
-            for cc in range(len(c)):
+            for cc in range(len(s)):
     
                 # define and normalize replica vector (neglect amplitude information)
                 omega = np.exp(-1j * (scoord[:, 0] * np.cos(np.radians(90 - teta[bb])) \
                                       + scoord[:, 1] * np.sin(np.radians(90 - teta[bb]))) \
-                               * 2. * np.pi * indice_freq[ll] / c[cc])
+                               * 2. * np.pi * indice_freq[ll] * s[cc])
                 omega /= np.linalg.norm(omega)
     
                 # calculate processors and save results
@@ -210,7 +211,7 @@ def plwave_beamformer(matr, scoord, prepr, fmin, fmax, Fs, w_length, w_delay,
                     raise ValueError("No processor called '%s'" % processor)
     beamformer /= indice_freq.size
     teta -= 180
-    return teta, c, beamformer.T
+    return teta, s*1000., beamformer.T
 
 
 def annul_dominant_interferers(CSDM, neig, data):
