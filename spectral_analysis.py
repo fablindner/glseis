@@ -116,7 +116,7 @@ class spectral_analysis():
         inst.plot(show_noise_models=False, period_lim=(1./fmax, 1./fmin))
 
 
-    def spectrogram(self, nfft, overlap, fmin=1, fmax=50, starttime=None, endtime=None, show=True):
+    def spectrogram(self, nfft, overlap, fmin=1, fmax=50, downsample=None, starttime=None, endtime=None, show=True, verbose=True):
         """
         This routine computes spectrograms of all files contained in 'filist'.
         The number of returned spectrograms may differ from the number of files
@@ -127,15 +127,22 @@ class spectral_analysis():
             mlab.specgram documentation
         :type overlap: float
         :param overlap: overlap between the nfft length segments in percent
+        :type fmin, fmax: float
+        :param fmin, fmax: frequency interval for which spectrogram is shown
+        :type downsample: integer
+        :param downsample: If not None, the spectrogram is downsampled along the
+            frequency axis; Just every downsample value is plotted/returned
         :type starttime: obspy UTCDateTime
         :param starttime: if given, data is trimmed. Works only if endtime is also
             specified
         :type endtime: obspy UTCDateTime
         :param endtime: if given, data is trimmed. Works only if starttime is also
             specified
-        :type return_results: boolean
-        :param return_results: If True, times, fruencies and spectrogram are returned.
-            Otherwise they are stored hand can be plotted with the function 'plot_specgram'
+        :type show: boolean
+        :param show: If True, spectrogram is displayed. Otherwise,  times, fruencies and 
+            spectrogram are returned.
+        :type verbose: boolen
+        :param verbose: if True, information on processing is printed
 
         :return: list, np.array, list
             1. list contains arrays of timestamps corresponding to the spectrograms
@@ -184,6 +191,8 @@ class spectral_analysis():
         specs = []
         times = []
         # loop over cont. segments and compute spectrograms
+        if verbose:
+            print("calculating spectrograms ...")
         for s in range(nseg + 1):
             # empty stream, where single files are added to
             master = Stream()
@@ -197,6 +206,8 @@ class spectral_analysis():
                     st.trim(starttime, endtime)
                 master += st[0]
                 master.merge()
+            if verbose:
+                print(master[0].stats.starttime)
             # data array of current cont. segment
             data = master[0].data
             # sampling rate
@@ -205,26 +216,43 @@ class spectral_analysis():
             spectrogram, freqs, time = mlab.specgram(data, nfft, fs, noverlap=nlap, mode="magnitude")
             # add timestamp of stime of current cont. segment in order to obtain absolute time
             time += stimes_seg[s]
+            # discard frequencies which are out of range fmin - fmax
+            ind = np.where((freqs >= fmin) & (freqs <= fmax))[0]
+            freqs = freqs[ind]
+            spectrogram = spectrogram[ind, :]
             # append spectrogram and corresponding times to the lists
             specs.append(spectrogram)
             times.append(time)
 
         if show:
+            if verbose:
+                print("plotting spectrograms ...")
             # for plotting proper timestring
             dateconv = np.vectorize(dtime.datetime.utcfromtimestamp)
-            xfmt = mdates.DateFormatter("%m-%d")
+            xfmt = mdates.DateFormatter("%m/%d %H:%M")
             # initialize arrays for min and max values of all spectrogram
             mins = np.zeros(len(specs))
             maxs = np.zeros(len(specs))
             # convert spectrograms to dB scale and obtain min and max values
             for ii in range(len(specs)):
                 specs[ii] = 10*np.log10(specs[ii])
-                mins, maxs = specs[ii].min(), specs[ii].max()
+                mins[ii], maxs[ii] = specs[ii].min(), specs[ii].max()
                 times[ii] = dateconv(times[ii])
+            # delete nans and infs
+            nans_mins = np.where(np.isnan(mins) | np.isinf(mins))
+            nans_maxs = np.where(np.isnan(maxs) | np.isinf(maxs))
+            mins = np.delete(mins, nans_mins[0])
+            maxs = np.delete(maxs, nans_maxs[0])
+            # get min and max values
             absmin = mins.min()
             absmax = maxs.max()
+            # sample down
+            if downsample is not None:
+                freqs = freqs[0::downsample]
+                for ii in range(len(specs)):
+                    specs[ii] = specs[ii][0::downsample, :]
             # create figure
-            fig = plt.figure()
+            fig = plt.figure(figsize=(27,4))
             ax = fig.add_subplot(111)
             for ii in range(len(specs)):
                 im = ax.pcolormesh(times[ii], freqs, specs[ii], cmap="jet", vmin=absmin, vmax=absmax)
@@ -338,8 +366,9 @@ class tremor():
                 # append values to list
                 Vs.append(V)
                 ts.append(timestamp)
-                err_ts.append(timestamp)
-                err_Vs.append(V)
+                if gap:
+                    err_ts.append(timestamp)
+                    err_Vs.append(V)
             t += self.win_long * self.overlap
             # increase counter - this is equal to the indice of the current value pair (ts, Vs)
             count += 1
@@ -385,7 +414,7 @@ class tremor():
             # gap if time between timestamps is greater (win_long * overlap)
             if self.ts[i+1] - self.ts[i] > (self.win_long * self.overlap):
                 # append starting indice of new trace
-                ntr.append(i)
+                ntr.append(i+1)
         # get data for single traces
         for n in range(len(ntr)):
             # just one trace
@@ -403,7 +432,7 @@ class tremor():
             # create new trace and add data
             new = Trace(data=data)
             new.stats.starttime = UTCDateTime(time[0])
-            new.stats.delta = time[1] - time[0]
+            new.stats.delta = self.win_long * self.overlap
             mgv += new
         # add stats to traces
         for i, tr in enumerate(mgv):
