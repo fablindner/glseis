@@ -142,8 +142,39 @@ def transfer_function(u, freq, easting, northing, elevation):
     plt.show()
 
 
+def annul_dominant_interferers(CSDM, neig, data):
+    """
+    This routine cancels the strong interferers from the data by projecting the
+    dominant eigenvectors of the cross-spectral-density matrix out of the data.
+    :type CSDM: numpy.ndarray
+    :param CSDM: cross-spectral-density matrix obtained from the data.
+    :type neig: integer
+    :param neig: number of dominant CSDM eigenvectors to annul from the data.
+    :type data: numpy.ndarray
+    :param data: the data which was used to calculate the CSDM. The projector is
+        applied to it in order to cancel the strongest interferer.
+
+    :return: numpy.ndarray
+        csdm: the new cross-spectral-density matrix calculated from the data after
+        the projector was applied to eliminate the strongest source.
+    """
+
+    # perform singular value decomposition to CSDM matrix
+    u, s, vT = np.linalg.svd(CSDM)
+    # chose only neig strongest eigenvectors
+    u_m = u[:, :neig]   # columns are eigenvectors
+    v_m = vT[:neig, :]  # rows (!) are eigenvectors
+    # set-up projector
+    proj = np.identity(CSDM.shape[0]) - np.dot(u_m, v_m)
+    # apply projector to data - project largest eigenvectors out of data
+    data = np.dot(proj, data)
+    # calculate projected cross spectral density matrix
+    csdm = np.dot(data, data.conj().T)
+    return csdm
+
+
 def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay,
-                      processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, norm=True):
+                      processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -176,6 +207,9 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     :param fc_min, fc_max: corner frequencies used for preprocessing
     :type taper_fract: float
     :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+    :type neig: integer
+    :param neig: number of dominant CSDM eigenvectors to annul from the data.
+        enables to suppress strong sources.
     :type norm: boolean
     :param norm: if True (default), beam power is normalized
 
@@ -244,6 +278,10 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
 
+        # annul dominant source 
+        if neig > 0:
+            K = annul_dominant_interferers(K, neig, vect_data_adaptive[ll, :, :])
+
         if norm:
             K /= np.linalg.norm(K)
 
@@ -277,38 +315,7 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     return teta, s*1000., beamformer.T
 
 
-def annul_dominant_interferers(CSDM, neig, data):
-    """
-    This routine cancels the strong interferers from the data by projecting the
-    dominant eigenvectors of the cross-spectral-density matrix out of the data.
-    :type CSDM: numpy.ndarray
-    :param CSDM: cross-spectral-density matrix obtained from the data.
-    :type neig: integer
-    :param neig: number of dominant CSDM eigenvectors to annul from the data.
-    :type data: numpy.ndarray
-    :param data: the data which was used to calculate the CSDM. The projector is
-        applied to it in order to cancel the strongest interferer.
-
-    :return: numpy.ndarray
-        csdm: the new cross-spectral-density matrix calculated from the data after
-        the projector was applied to eliminate the strongest source.
-    """
-
-    # perform singular value decomposition to CSDM matrix
-    u, s, vT = np.linalg.svd(CSDM)
-    # chose only neig strongest eigenvectors
-    u_m = u[:, :neig]   # columns are eigenvectors
-    v_m = vT[:neig, :]  # rows (!) are eigenvectors
-    # set-up projector
-    proj = np.identity(CSDM.shape[0]) - np.dot(u_m, v_m)
-    # apply projector to data - project largest eigenvectors out of data
-    data = np.dot(proj, data)
-    # calculate projected cross spectral density matrix
-    csdm = np.dot(data, data.conj().T)
-    return csdm
-
-
-def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, prepr, fmin, fmax, fc_min, fc_max,
+def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cmax, dc, prepr, fmin, fmax, fc_min, fc_max,
                             Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
@@ -319,12 +326,13 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
-    :type xmax, ymax: float
-    :param xmax, ymax: spatial grid search: grid ranges from x - xmax to x + xmax and
-        y - ymax to y + ymax, where (x,y) are the coordinates of first station (scoord[0, :])
-    :type dx, dy: float
-    :param dx, dy: grid resolution; increment from x - xmax to x + xmax and y - ymax to y + ymax,
-        respectively. (x,y) are the coordinates of the first station (scoord[0, :])
+    :type xmax, ymax, zmax: float
+    :param xmax, ymax, zmax: spatial grid search: grid ranges from x - xmax to x + xmax,
+        y - ymax to y + ymax and 0 to zmax, where (x,y) are the array center. zmax is the
+        maximum depth used for the grid search.
+    :type dx, dy, dz: float
+    :param dx, dy, dz: grid resolution; increment from x - xmax to x + xmax, y - ymax to y + ymax,
+        and 0 to zmax, respectively. (x,y) are the coordinates of the array center
     :type cmin, cmax: float
     :param cmin, cmax: velocity interval used to calculate replica vector
     :type dc: float
@@ -366,8 +374,12 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
     n_stats = data.shape[1]
 
     # grid for search over location and apparent velocity
-    xcoord = np.arange(-xmax, xmax + dx, dx) + scoord[0, 0]
-    ycoord = np.arange(-ymax, ymax + dy, dy) + scoord[0, 1]
+    xcoord = np.arange(-xmax, xmax + dx, dx) + np.mean(scoord[:, 0])
+    ycoord = np.arange(-ymax, ymax + dy, dy) + np.mean(scoord[:, 1])
+    if zmax > 0:
+        zcoord = np.arange(0, zmax + dz, dz)
+    else:
+        zcoord = [0.]
     c = np.arange(cmin, cmax + dc, dc)
     # extract number of data points
     Nombre = data[:, 1].size
@@ -432,30 +444,31 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, dx, dy, cmin, cmax, dc, pr
         K_inv = np.linalg.inv(K)
 
         # loop over spatial grid
-        for yy in range(len(ycoord)):
-            for xx in range(len(xcoord)):
-                # loop over apparent velocity
-                for cc in range(len(c)):
-
-                    # define and normalize replica vector (neglect amplitude information)
-                    omega = np.exp(-1j * np.sqrt((scoord[:, 0] - xcoord[xx])**2 + (scoord[:, 1] - ycoord[yy])**2) \
-                                   * 2. * np.pi * indice_freq[ll] / c[cc])
-                    omega /= np.linalg.norm(omega)
-
-                    # calculate processors and save results
-                    replica = omega[:, None]
-                    # bartlett
-                    if processor == "bartlett":
-                        beamformer[yy, xx, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
-                    # adaptive - Note that replica.conj().T * replica = 1. + 0j
-                    elif processor == "adaptive":
-                        beamformer[yy, xx, cc] += abs(np.dot(replica.conj().T, replica) \
-                                                   / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
-                    else:
-                        raise ValueError("No processor called '%s'" % processor)
+        for zz in range(len(zcoord)):
+            for yy in range(len(ycoord)):
+                for xx in range(len(xcoord)):
+                    # loop over apparent velocity
+                    for cc in range(len(c)):
+    
+                        # define and normalize replica vector (neglect amplitude information)
+                        omega = np.exp(-1j * np.sqrt((scoord[:, 0] - xcoord[xx])**2 + (scoord[:, 1] - ycoord[yy])**2 + zcoord[zz]**2) \
+                                       * 2. * np.pi * indice_freq[ll] / c[cc])
+                        omega /= np.linalg.norm(omega)
+    
+                        # calculate processors and save results
+                        replica = omega[:, None]
+                        # bartlett
+                        if processor == "bartlett":
+                            beamformer[yy, xx, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
+                        # adaptive - Note that replica.conj().T * replica = 1. + 0j
+                        elif processor == "adaptive":
+                            beamformer[yy, xx, cc] += abs(np.dot(replica.conj().T, replica) \
+                                                       / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
+                        else:
+                            raise ValueError("No processor called '%s'" % processor)
 
     beamformer /= indice_freq.size
-    return xcoord, ycoord, c, beamformer
+    return xcoord, ycoord, zcoord, c, beamformer
 
 
 
