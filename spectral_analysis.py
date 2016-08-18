@@ -94,14 +94,14 @@ class spectral_analysis():
         """
 
         # read list of files
-        files = np.genfromtxt(self.path + self.filist, dtype=str)
+        files = np.genfromtxt(self.filist, dtype=str)
         n = files.size
         # if no paz information is given, divide by 1.0
         if self.paz == None:
-            self.paz = {"sensitivity": 1.0}
+            self.metadata = {"sensitivity": 1.0}
         # loop over files
         for i in range(n):
-            st = read(self.path + files[i])
+            st = read(files[i])
             st.decimate(self.dec_fact)
             if len(st) > 1:
                 warnings.warn("more than one trace in st")
@@ -109,10 +109,10 @@ class spectral_analysis():
             # at first run, initialize PPSD instance
             if i == 0:
                 # "is_rotational_data" is set in order not to differentiate that data
-                inst = PPSD(tr.stats, paz=self.paz, is_rotational_data=True)
+                inst = PPSD(tr.stats, metadata=self.metadata, ppsd_length=1800.0, overlap=0.5, db_bins=(-50, 50, 1), special_handling="ringlaser")
             # add trace
             inst.add(tr)
-        print("number of psd segments:", len(inst.times))
+        print("number of psd segments:", len(inst.current_times_used))
         inst.plot(show_noise_models=False, period_lim=(1./fmax, 1./fmin))
 
 
@@ -151,7 +151,7 @@ class spectral_analysis():
         """
 
         # read list of files
-        files = np.genfromtxt(self.path + self.filist, dtype=str)
+        files = np.genfromtxt(self.filist, dtype=str)
         n = files.size
         # initialize arrays
         # array that keeps track of to which continuous segment a file belongs to
@@ -161,7 +161,7 @@ class spectral_analysis():
         etimes_files = np.zeros(n)
         # read files and get start and endtimes
         for i in range(n):
-            st = read(self.path + files[i])
+            st = read(files[i])
             st.select(station=self.stn, channel=self.chn)
             delta = st[0].stats.delta
             if len(st) > 1:
@@ -200,7 +200,7 @@ class spectral_analysis():
             fs = files[np.where(seg == s)]
             # ... loop over these files, read, decimate, add to master stream and merge 
             for f in range(len(fs)):
-                st = read(self.path + fs[f])
+                st = read(fs[f])
                 st.decimate(self.dec_fact)
                 if starttime is not None and endtime is not None:
                     st.trim(starttime, endtime)
