@@ -53,7 +53,7 @@ class spectral_analysis():
     """
     Class to perform spectral analysis on given data.
     """
-    def __init__(self, filist, path, stn, chn, paz, dec_fact):
+    def __init__(self, filist, path, stn, chn, metadata, dec_fact):
         """
         Initialize the spectral_analysis class. This comprises
         all information for reading and preprocessing the data.
@@ -69,8 +69,8 @@ class spectral_analysis():
         :type chn: string
         :param chn: The channel to use. For safety only: discards files
             recorded on different channels (if contained in 'filist')
-        :type paz: dictionary
-        :param paz: Poles, zeros and sensitivity of the recording device
+        :type metadata: dictionary
+        :param metadata: Poles, zeros and sensitivity of the recording device
         :type dec_fact: integer
         :param dec_fact: Decimation factor applied to the data series
         """
@@ -78,11 +78,11 @@ class spectral_analysis():
         self.path = path
         self.stn = stn
         self.chn = chn
-        self.paz = paz
+        self.metadata = metadata
         self.dec_fact = dec_fact
         
 
-    def ppsd(self, fmin=1., fmax=100.):
+    def ppsd(self, fmin=1., fmax=100., special_handling=None, save=False):
         """
         Function that calculates the probabilistic power spectral density
         of a given station-channel combination.
@@ -97,11 +97,12 @@ class spectral_analysis():
         files = np.genfromtxt(self.filist, dtype=str)
         n = files.size
         # if no paz information is given, divide by 1.0
-        if self.paz == None:
+        if self.metadata == None:
             self.metadata = {"sensitivity": 1.0}
         # loop over files
         for i in range(n):
             st = read(files[i])
+            st.merge()
             st.decimate(self.dec_fact)
             if len(st) > 1:
                 warnings.warn("more than one trace in st")
@@ -109,11 +110,14 @@ class spectral_analysis():
             # at first run, initialize PPSD instance
             if i == 0:
                 # "is_rotational_data" is set in order not to differentiate that data
-                inst = PPSD(tr.stats, metadata=self.metadata, ppsd_length=1800.0, overlap=0.5, db_bins=(-50, 50, 1), special_handling="ringlaser")
+                inst = PPSD(tr.stats, metadata=self.metadata, special_handling=special_handling)
             # add trace
+            print("add trace %s ..." % tr)
             inst.add(tr)
         print("number of psd segments:", len(inst.current_times_used))
-        inst.plot(show_noise_models=False, period_lim=(1./fmax, 1./fmin))
+        inst.plot(show_noise_models=True, xaxis_frequency=True, period_lim=(fmin, fmax))
+        if save:
+            inst.save_npz("ppsd_%s_%s.npz" % (self.stn, self.chn))
 
 
     def spectrogram(self, nfft, overlap, fmin=1, fmax=50, downsample=None, starttime=None, endtime=None, show=True, verbose=True):
@@ -151,6 +155,7 @@ class spectral_analysis():
         """
 
         # read list of files
+        print("scanning files ...")
         files = np.genfromtxt(self.filist, dtype=str)
         n = files.size
         # initialize arrays
@@ -162,6 +167,7 @@ class spectral_analysis():
         # read files and get start and endtimes
         for i in range(n):
             st = read(files[i])
+            st.merge()
             st.select(station=self.stn, channel=self.chn)
             delta = st[0].stats.delta
             if len(st) > 1:
@@ -176,7 +182,8 @@ class spectral_analysis():
         # loop over files to detect gaps between files and store starttimes of
         # continuous segments
         for i in range(n-1):
-            if stimes_files[i+1] > etimes_files[i] + delta:
+            #if stimes_files[i+1] > etimes_files[i] + delta:
+            if stimes_files[i+1] > etimes_files[i]:
                 interval +=1
                 stimes_seg.append(stimes_files[i+1])
             seg[i+1] = interval
@@ -201,19 +208,23 @@ class spectral_analysis():
             # ... loop over these files, read, decimate, add to master stream and merge 
             for f in range(len(fs)):
                 st = read(fs[f])
+                st.merge()
                 st.decimate(self.dec_fact)
                 if starttime is not None and endtime is not None:
                     st.trim(starttime, endtime)
                 master += st[0]
                 master.merge()
+                master.detrend()
             if verbose:
                 print(master[0].stats.starttime)
             # data array of current cont. segment
             data = master[0].data
+            if self.metadata is not None:
+                data /= self.metadata["sensitivity"]
             # sampling rate
             fs = master[0].stats.sampling_rate
             # finally...calculate spectrogram of current cont. segment
-            spectrogram, freqs, time = mlab.specgram(data, nfft, fs, noverlap=nlap, mode="magnitude")
+            spectrogram, freqs, time = mlab.specgram(data, nfft, fs, noverlap=nlap, mode="psd")
             # add timestamp of stime of current cont. segment in order to obtain absolute time
             time += stimes_seg[s]
             # discard frequencies which are out of range fmin - fmax
@@ -229,7 +240,7 @@ class spectral_analysis():
                 print("plotting spectrograms ...")
             # for plotting proper timestring
             dateconv = np.vectorize(dtime.datetime.utcfromtimestamp)
-            xfmt = mdates.DateFormatter("%m/%d %H:%M")
+            xfmt = mdates.DateFormatter("%m/%d")
             # initialize arrays for min and max values of all spectrogram
             mins = np.zeros(len(specs))
             maxs = np.zeros(len(specs))
@@ -252,18 +263,20 @@ class spectral_analysis():
                 for ii in range(len(specs)):
                     specs[ii] = specs[ii][0::downsample, :]
             # create figure
-            fig = plt.figure(figsize=(27,4))
+            fig = plt.figure(figsize=(10,3))
             ax = fig.add_subplot(111)
             for ii in range(len(specs)):
-                im = ax.pcolormesh(times[ii], freqs, specs[ii], cmap="jet", vmin=absmin, vmax=absmax)
+                im = ax.pcolormesh(times[ii], freqs, specs[ii], cmap="viridis", vmin=absmin, vmax=absmax, rasterized=True)
             ax.set_ylim(fmin, fmax)
             ax.set_xlim(times[0][0], times[-1][-1])
             ax.set_ylabel("Frequency (Hz)")
+            ax.set_yscale("log")
             ax.xaxis.set_major_formatter(xfmt)
             cbar = fig.colorbar(im)
-            cbar.set_label("Power (dB)")
-            ax.set_title("%s..%s" % (self.stn, self.chn))
-            plt.show()
+            cbar.set_label("(dB)")
+            #ax.set_title("%s..%s" % (self.stn, self.chn))
+            #plt.show()
+            plt.savefig("%s_%s.eps" % (self.stn, self.chn), format="eps", bbox_inches='tight')
         else:
             return times, freqs, specs
 
