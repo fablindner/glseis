@@ -178,7 +178,6 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
-    Singular value decomposition is not implemented, yet.
 
     :type matr: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
@@ -320,7 +319,8 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
-    Singular value decomposition is not implemented, yet.
+    Can also be used to focus the beam to a certain coordinate, which must be specified with
+    xmax, ymax, zmax. In this case, dx, dy, and dz need to be set to zero!
 
     :type matr: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
@@ -374,12 +374,19 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
     n_stats = data.shape[1]
 
     # grid for search over location and apparent velocity
-    xcoord = np.arange(-xmax, xmax + dx, dx) + np.mean(scoord[:, 0])
-    ycoord = np.arange(-ymax, ymax + dy, dy) + np.mean(scoord[:, 1])
-    if zmax > 0:
-        zcoord = np.arange(0, zmax + dz, dz)
+    # if beam is focussed to a fixed position
+    if dx == 0. and dy == 0.:
+        xcoord = np.array([xmax])
+        ycoord = np.array([ymax])
+        zcoord = np.array([zmax])
+    # if beam is calculated for a regular grid
     else:
-        zcoord = [0.]
+        xcoord = np.arange(-xmax, xmax + dx, dx) + np.mean(scoord[:, 0])
+        ycoord = np.arange(-ymax, ymax + dy, dy) + np.mean(scoord[:, 1])
+        if zmax > 0:
+            zcoord = np.arange(0, zmax + dz, dz)
+        else:
+            zcoord = [0.]
     c = np.arange(cmin, cmax + dc, dc)
     # extract number of data points
     Nombre = data[:, 1].size
@@ -399,7 +406,7 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
 
     # initialize beamformer
     # dim: [number xcoord, number ycoord, number app. vel.]
-    beamformer = np.zeros((len(ycoord), len(xcoord), len(c)))
+    beamformer = np.zeros((ycoord.size, xcoord.size, c.size))
 
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
@@ -468,7 +475,7 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
                             raise ValueError("No processor called '%s'" % processor)
 
     beamformer /= indice_freq.size
-    return xcoord, ycoord, zcoord, c, beamformer
-
-
-
+    if dx == 0 and dy == 0:
+        return c, beamformer
+    else:
+        return xcoord, ycoord, zcoord, c, beamformer
