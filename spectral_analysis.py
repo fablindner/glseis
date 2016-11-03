@@ -82,7 +82,7 @@ class spectral_analysis():
         self.dec_fact = dec_fact
         
 
-    def ppsd(self, fmin=1., fmax=100., special_handling=None, save=False):
+    def ppsd(self, fmin=1., fmax=100., special_handling=None, filename=None, save=False):
         """
         Function that calculates the probabilistic power spectral density
         of a given station-channel combination.
@@ -115,7 +115,7 @@ class spectral_analysis():
             print("add trace %s ..." % tr)
             inst.add(tr)
         print("number of psd segments:", len(inst.current_times_used))
-        inst.plot(show_noise_models=True, xaxis_frequency=True, period_lim=(fmin, fmax))
+        inst.plot(show_noise_models=True, xaxis_frequency=True, period_lim=(fmin, fmax), filename=filename)
         if save:
             inst.save_npz("ppsd_%s_%s.npz" % (self.stn, self.chn))
 
@@ -270,6 +270,7 @@ class spectral_analysis():
             ax.set_ylim(fmin, fmax)
             ax.set_xlim(times[0][0], times[-1][-1])
             ax.set_ylabel("Frequency (Hz)")
+            ax.set_xlabel("Date (mm/dd)")
             ax.set_yscale("log")
             ax.xaxis.set_major_formatter(xfmt)
             cbar = fig.colorbar(im)
