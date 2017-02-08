@@ -223,7 +223,7 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     n_stats = data.shape[1]
 
     # grid for search over backazimuth and apparent velocity
-    teta = np.arange(0, 361, 1) + 180
+    teta = np.arange(1, 363, 2) + 180
     s = np.arange(smin, smax + ds, ds) / 1000.
     # extract number of data points
     Nombre = data[:, 1].size
@@ -314,7 +314,7 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     return teta, s*1000., beamformer.T
 
 
-def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cmax, dc, prepr, fmin, fmax, fc_min, fc_max,
+def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, smin, smax, ds, prepr, fmin, fmax, fc_min, fc_max,
                             Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
@@ -333,10 +333,10 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
     :type dx, dy, dz: float
     :param dx, dy, dz: grid resolution; increment from x - xmax to x + xmax, y - ymax to y + ymax,
         and 0 to zmax, respectively. (x,y) are the coordinates of the array center
-    :type cmin, cmax: float
-    :param cmin, cmax: velocity interval used to calculate replica vector
-    :type dc: float
-    :param dc: velocity step used to calculate replica vector
+    :type smin, smax: float
+    :param smin, smax: slowness interval used to calculate replica vector
+    :type ds: float
+    :param ds: slowness step used to calculate replica vector
     :type prepr: integer
     :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
@@ -387,7 +387,7 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
             zcoord = np.arange(0, zmax + dz, dz)
         else:
             zcoord = [0.]
-    c = np.arange(cmin, cmax + dc, dc)
+    s = np.arange(smin, smax + ds, ds) / 1000.
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
@@ -406,7 +406,7 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
 
     # initialize beamformer
     # dim: [number xcoord, number ycoord, number app. vel.]
-    beamformer = np.zeros((ycoord.size, xcoord.size, c.size))
+    beamformer = np.zeros((ycoord.size, xcoord.size, s.size))
 
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
@@ -455,11 +455,11 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
             for yy in range(len(ycoord)):
                 for xx in range(len(xcoord)):
                     # loop over apparent velocity
-                    for cc in range(len(c)):
+                    for cc in range(len(s)):
     
                         # define and normalize replica vector (neglect amplitude information)
                         omega = np.exp(-1j * np.sqrt((scoord[:, 0] - xcoord[xx])**2 + (scoord[:, 1] - ycoord[yy])**2 + zcoord[zz]**2) \
-                                       * 2. * np.pi * indice_freq[ll] / c[cc])
+                                       * 2. * np.pi * indice_freq[ll] * s[cc])
                         omega /= np.linalg.norm(omega)
     
                         # calculate processors and save results
@@ -476,6 +476,6 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, cmin, cm
 
     beamformer /= indice_freq.size
     if dx == 0 and dy == 0:
-        return c, beamformer
+        return s*1000., beamformer
     else:
-        return xcoord, ycoord, zcoord, c, beamformer
+        return xcoord, ycoord, zcoord, s*1000., beamformer
