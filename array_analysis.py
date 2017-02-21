@@ -173,7 +173,7 @@ def annul_dominant_interferers(CSDM, neig, data):
     return csdm
 
 
-def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay,
+def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay, baz=None,
                       processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
@@ -197,6 +197,8 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     :param w_length: length of sliding window in seconds. result is "averaged" over windows
     :type w_delay: float
     :param w_delay: delay of sliding window in seconds with respect to previous window
+    :type baz: float
+    :param baz: Back azimuth. If given, the beam is calculated only for this specific back azimuth
     :type processor: string
     :param processor: processor used to match the cross-spectral-density matrix to the
         replica vecotr. see Corciulo et al., 2012
@@ -223,7 +225,10 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     n_stats = data.shape[1]
 
     # grid for search over backazimuth and apparent velocity
-    teta = np.arange(1, 363, 2) + 180
+    if baz is None:
+        teta = np.arange(1, 363, 2) + 180
+    else:
+        teta = np.array([baz + 180])
     s = np.arange(smin, smax + ds, ds) / 1000.
     # extract number of data points
     Nombre = data[:, 1].size
