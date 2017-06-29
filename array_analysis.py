@@ -289,8 +289,8 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
         if norm:
             K /= np.linalg.norm(K)
 
-    
-        K_inv = np.linalg.inv(K)
+        if processor == "adaptive":
+            K_inv = np.linalg.inv(K)
     
         # loop over backazimuth
         for bb in range(len(teta)):
@@ -452,8 +452,8 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, smin, sm
         if norm:
             K /= np.linalg.norm(K)
 
-
-        K_inv = np.linalg.inv(K)
+        if processor == "adaptive":
+            K_inv = np.linalg.inv(K)
 
         # loop over spatial grid
         for zz in range(len(zcoord)):
