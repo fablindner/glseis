@@ -173,7 +173,7 @@ def annul_dominant_interferers(CSDM, neig, data):
     return csdm
 
 
-def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_length, w_delay, baz=None,
+def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax, Fs, w_length, w_delay, baz=None,
                       processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
@@ -183,12 +183,14 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
-    :type smin, smax: float
-    :param smin, smax: slowness interval used to calculate replica vector
-    :type ds: float
-    :param ds: slowness step used to calculate replica vector
+    :type svmin, svmax: float
+    :param svmin, svmax: slowness/velocity interval used to calculate replica vector
+    :type dsv: float
+    :param dsv: slowness/velocity step used to calculate replica vector
     :type prepr: integer
     :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
+    :type slow: boolean 
+    :param slow: if true, svmin, svmax, dsv are slowness values. if false, velocity values
     :type fmin, fmax: float
     :param fmin, fmax: frequency range for which the beamforming result is calculated
     :type Fs: float
@@ -229,7 +231,11 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
         teta = np.arange(1, 363, 2) + 180
     else:
         teta = np.array([baz + 180])
-    s = np.arange(smin, smax + ds, ds) / 1000.
+    if slow:
+        s = np.arange(svmin, svmax + dsv, dsv) / 1000.
+    else:
+        v = np.arange(svmin, svmax + dsv, dsv) * 1000.
+        s = 1. / v
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
@@ -237,10 +243,13 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     # construct analysis frequencies
     indice_freq = np.arange(fmin, fmax+df, df)
     # construct analysis window for entire hour and delay
-    interval = np.arange(0, int(w_length * Fs))
+    interval = np.arange(0, np.ceil(w_length * Fs) + 1, dtype=int)
     delay = int(w_delay * Fs)
     # number of analysis windows ('shots')
-    numero_shots = np.floor((Nombre - len(interval)) / delay) + 1
+    if delay > 0:
+        numero_shots = (Nombre - len(interval)) // delay + 1
+    elif delay == 0:
+        numero_shots = 1
     
     # initialize data steering vector:
     # dim: [number of frequencies, number of stations, number of analysis windows]
@@ -258,26 +267,23 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
     for ii in range(n_stats):
         toto = data[:, ii]
         # now loop over shots
-        numero = 0
-        while (numero * delay + len(interval)) < len(toto):
+        for jj in range(numero_shots):
+        #while (numero * delay + len(interval)) <= len(toto):
             # calculate DFT
             # dim: [number frequencies]
-            adjust = np.dot(toto[numero * delay + interval][:, None], np.ones((1, len(indice_freq))))
+            adjust = np.dot(toto[jj * delay + interval][:, None], np.ones((1, len(indice_freq))))
             test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
             # fill data steering vector: ii'th station, numero'th shot.
             # normalize in order not to bias strongest seismogram.
             # dim: [number frequencies, number stations, number shots]
-            vect_data_adaptive[:, ii, numero] = (test / abs(test)).conj().T
-            numero += 1
+            vect_data_adaptive[:, ii, jj] = (test / abs(test)).conj().T
+            #numero += 1
 
     # loop over frequencies
     for ll in range(len(indice_freq)):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        if numero == 1:
-            K = np.dot(vect_data_adaptive[ll, :, :].conj().T, vect_data_adaptive[ll, :, :])
-        else:
-            K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
+        K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
     
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
@@ -300,7 +306,7 @@ def plwave_beamformer(matr, scoord, smin, smax, ds, prepr, fmin, fmax, Fs, w_len
                 # define and normalize replica vector (neglect amplitude information)
                 omega = np.exp(-1j * (scoord[:, 0] * np.cos(np.radians(90 - teta[bb])) \
                                       + scoord[:, 1] * np.sin(np.radians(90 - teta[bb]))) \
-                               * 2. * np.pi * indice_freq[ll] * s[cc])
+                                      * 2. * np.pi * indice_freq[ll] * s[cc])
                 omega /= np.linalg.norm(omega)
     
                 # calculate processors and save results
