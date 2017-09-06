@@ -50,3 +50,26 @@ def Hv_zeros(order, n):
     xi = zero_crossings(x, H)
     xi[0] = 0.
     return xi[1:n+1]
+
+
+def interstation_dist(stn1, stn2, path2file, hor=True):
+    """
+    Calculates the the (horizontal) distance between two stations.
+    :param stn1: first station
+    :param stn2: second station
+    :param path_fn: path + file name of file containing the coordinates of stn1 and stn2
+    :param hor: if True, calculates the horizontal distance. If False, calculates the
+        distance by considering also changes in altitude.
+    """
+    stns = np.genfromtxt(path_fn, usecols=(0,), dtype=str)
+    easts, norths, elevs = np.loadtxt(fn, usecols=(1,2,3), unpack=True)
+
+    ind1 = np.where(stns == stn1)[0]
+    ind2 = np.where(stns == stn2)[0]
+    
+    if hor:
+        dist = np.sqrt((easts[ind1] - easts[ind2])**2 + (norths[ind1] - norths[ind2])**2)
+    else:
+        dist = np.sqrt((easts[ind1] - easts[ind2])**2 + (norths[ind1] - norths[ind2])**2 
+                     + (elevs[ind1] - elevs[ind2])**2)
+    return dist
