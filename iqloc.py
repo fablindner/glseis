@@ -20,7 +20,8 @@ class icequake_locations():
     """
 
 
-    def __init__(self, path2mseed, path2DBs, array, r, stnlist, chn, sens, jday, decfact, fmin, fmax, vmin, vmax, dv):
+    def __init__(self, path2mseed, path2DBs, array, r, stnlist, chn,
+                 sens, jday, fs, decfact, fmin, fmax, vmin, vmax, dv):
         """
         Initialize class icequake_locations.
         :param path2mseed: path to mseed data
@@ -31,6 +32,7 @@ class icequake_locations():
         :param chn: channel of consideration
         :param sens: overall sensitivity of seismometer + digitizer -> convert to m/s
         :param jday: julian day of consideration
+        :param fs: sampling frequency
         :param decfact: decimation factor
         :param fmin: min frequency used for beamforming
         :param fmax: max frequency used for beamforming
@@ -46,6 +48,7 @@ class icequake_locations():
         self.chn = chn
         self.sens = sens
         self.jday = jday
+        self.fs = fs
         self.decfact = decfact
         self.fmin = fmin
         self.fmax = fmax
@@ -188,6 +191,7 @@ class icequake_locations():
         # trigger on continuous data from all array stations
         trig_times = {}
         dict_env_maxs = {}
+        # read data
         for stn in self.stnlist:
             try:
                 st = read(self.path2mseed + "%s/%s.D/4D.%s..%s.D.2016.%i" % (stn, self.chn, stn, self.chn, self.jday))
@@ -195,12 +199,17 @@ class icequake_locations():
                 print("%s: no data!!!" % stn)
                 print("skip this day!")
                 sys.exit(1)
+            # adjust sampling rate
+            for tr in st:
+                if tr.stats.sampling_rate != self.fs:
+                    tr.resample(self.fs)
+            if self.decfact > 1:
+                st.decimate(self.decfact)
+            # trim and filter
             t1 = UTCDateTime(2016, 1, 1)
             t1.julday = self.jday
             t2 = t1 + 24. * 60. * 60.
             st.trim(t1, t2)
-            if self.decfact > 1:
-                st.decimate(self.decfact)
             df = st[0].stats.sampling_rate
             dt = st[0].stats.delta
             st.filter("bandpass", freqmin=ftmin, freqmax=ftmax, zerophase=True)
@@ -246,6 +255,10 @@ class icequake_locations():
                 te = UTCDateTime(offs[i]) + p
                 st_ = read(self.path2mseed + "%s/%s.D/4D.%s..%s.D.2016.%i" % (stn, self.chn, stn, self.chn, self.jday),
                            starttime=ts-5, endtime=te+5)
+                # adjust sampling rate
+                for tr in st_:
+                    if tr.stats.sampling_rate != self.fs:
+                        tr.resample(self.fs)
                 st_.filter("bandpass", freqmin=self.fmin, freqmax=self.fmax, zerophase=True)
                 st_.trim(ts, te)
                 # calc envelope
@@ -338,6 +351,10 @@ class icequake_locations():
                 if len(cont) < len(self.stnlist):
                     print("only %i stations recorded event - skipped event !" % len(cont))
                     sys.exit(1)
+                # adjust sampling rate
+                for tr in cont:
+                    if tr.stats.sampling_rate != self.fs:
+                        tr.resample(self.fs)
                 if self.decfact > 1:
                     cont.decimate(self.decfact)
                 cont.detrend("linear")
@@ -470,6 +487,10 @@ class icequake_locations():
                 if len(cont) < len(self.stnlist):
                     print("only %i stations recorded event - skipped event !" % len(cont))
                     sys.exit(1)
+                # adjust sampling rate
+                for tr in cont:
+                    if tr.stats.sampling_rate != self.fs:
+                        tr.resample(self.fs)
                 if self.decfact > 1:
                     cont.decimate(self.decfact)
                 cont.plot()
@@ -860,7 +881,10 @@ class icequake_locations():
                     array_ind = int(array[1])
                     st += read(self.path2mseed + "PM%i5/%s.D/4D.PM%i5..%s.D.2016.%03d" % (array_ind, self.chn, array_ind,
                                self.chn, self.jday), starttime=t1-5, endtime=t2+5)
-                st.resample(500)
+                # adjust sampling rate
+                for tr in st:
+                    if tr.stats.sampling_rate != self.fs:
+                        tr.resample(self.fs)
                 st.filter("highpass", freq=1., zerophase=True)
                 st.trim(t1, t2)
                 # calc hour of day
