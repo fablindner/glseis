@@ -210,7 +210,6 @@ class icequake_locations():
             t1.julday = self.jday
             t2 = t1 + 24. * 60. * 60.
             st.trim(t1, t2)
-            df = st[0].stats.sampling_rate
             dt = st[0].stats.delta
             st.filter("bandpass", freqmin=ftmin, freqmax=ftmax, zerophase=True)
 
@@ -310,16 +309,15 @@ class icequake_locations():
         for i in range(len(on_off_)):
             on_off[i,:] = on_off_[i]
 
-        return on_off, df, dt
+        return on_off
 
 
 
-    def beamform_icequakes(self, on_off, df, coords, select_iq=False, show_res=False):
+    def beamform_icequakes(self, on_off, coords, select_iq=False, show_res=False):
         """
         Function to perform plaine wave beamforming on triggerd event. Also calculates the peak frequency and peak
         amplitude averaged over the array. Writes results to file.
         :param on_off: trigger on/off times
-        :param df: sampling frequency
         :param coords: coordinates of array stations (consecutively numbered station name required)
         :param select_iq: if True, event will be displayed and user can decide, whether event will be further processed
         :param show_res: if True, beamforming result (along with waveforms) will be plotted and saved.
@@ -357,6 +355,7 @@ class icequake_locations():
                         tr.resample(self.fs)
                 if self.decfact > 1:
                     cont.decimate(self.decfact)
+                df = cont[0].stats.sampling_rate
                 cont.detrend("linear")
                 cont.taper(max_percentage=0.1)
                 cont.filter("highpass", freq=1., zerophase=True)
