@@ -236,7 +236,7 @@ class icequake_locations():
                     ind += trig.shape[0]
 
             # remove events which are triggered within one second after an event
-            tt = 1.
+            tt = 3.
             ind_del = []
             for i in range(len(ons) - 1):
                 if (ons[i+1] - ons[i]) < tt:
