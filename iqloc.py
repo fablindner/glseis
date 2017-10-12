@@ -154,7 +154,7 @@ class icequake_locations():
         """
         try:
             # load data
-            path = "%s/%03d/Cat_%03d_%s.txt" % (array, self.jday, self.jday, array)
+            path = "%s/EventDB/%s_EventDB_%03d.txt" % (array, array, self.jday)
             id, on, off = np.genfromtxt(path, skip_header=7, dtype="str", usecols=(0,1,2), unpack=True)
             baz, slow, pow = np.loadtxt(path, skiprows=7, usecols=(7,8,9), unpack=True)
 
@@ -169,6 +169,216 @@ class icequake_locations():
             return [id, on, off, baz, slow, pow]
         except:
             return None
+
+
+    def write_IQcat_entry(self, fh, fn, event):
+        """
+        Function to write icequake catalog entries
+        :param fh: open file
+        :param fn: corresponding file name
+        :param event: event dictionary
+        :return: writes entry to file fn
+        """
+        # write header (if file is empty)
+        if os.stat(fn).st_size == 0:
+            fh.write("# 1. col:  (avg) trigger onset\n")
+            fh.write("# 2. col:  epicenter easting\n")
+            fh.write("# 3. col:  epicenter northing\n")
+            fh.write("# 4. col:  epicenter easting std\n")
+            fh.write("# 5. col:  epicenter northing std\n")
+            fh.write("# 6. col:  average weight\n")
+            fh.write("# 7. col:  number of arrays that detected event\n")
+            fh.write("# 8. col:  number of arrays that located event\n")
+            fh.write("# 9. col:  event id array A0\n")
+            fh.write("# 10. col:  event id array A1\n")
+            fh.write("# 11. col: event id array A2\n")
+            fh.write("# 12. col: event id array A3\n")
+            fh.write("# =============================================\n")
+            fh.flush()
+
+        # write data to file
+        id_A0 = np.nan
+        id_A1 = np.nan
+        id_A2 = np.nan
+        id_A3 = np.nan
+        for id in event["aIDs"]:
+            if "A0" in id:
+                id_A0 = id
+            elif "A1" in id:
+                id_A1 = id
+            elif "A2" in id:
+                id_A2 = id
+            elif "A3" in id:
+                id_A3 = id
+        line = "%s  %8.1f  %8.1f  %6.1f  %6.1f  %5.3f  %i  %i  %11s  %11s  %11s  %11s"\
+               % (UTCDateTime(event["trig_time"]), event["epicntr"][0], event["epicntr"][1],
+                  event["epicntr_std"][0], event["epicntr_std"][1], event["weight"],
+                  len(event["arrays"]), event["num_loc"], id_A0, id_A1, id_A2, id_A3)
+        fh.write(line + "\n")
+
+
+    def plot_event_loc(self, event, fn_coords):
+        """
+        Function to plot the event location result.
+        :param event: dictionary containing event information
+        :param fn_coords: file containing coordinates of array centers
+        :return: plot
+        """
+
+        # coordinates of array centers
+        e_coords, n_coords = np.loadtxt(fn_coords, usecols=(1,2), unpack=True)
+        array_ids = np.genfromtxt(fn_coords, usecols=(0,), dtype=str)
+
+        # coordinate bounds of image
+        e_min = 602909.
+        e_max = 608674.
+        n_min = 135425.
+        n_max = 138507.
+
+        # read epicenter data
+        epic_east = event["epicntr"][0]
+        epic_north = event["epicntr"][1]
+        epic_east_std = event["epicntr_std"][0]
+        epic_north_std = event["epicntr_std"][1]
+
+        # data of center stations
+        t1 = UTCDateTime(event["trig_time"]) - 0.5
+        t2 = UTCDateTime(event["trig_time"]) + event["trig_dur"] + 0.8
+        # read data
+        arrays = event["arrays"]
+        st = Stream()
+        for arr in arrays:
+            ind_arr = int(arr[1])
+            st += read(self.path2mseed + "PM%i5/%s.D/4D.PM%i5..%s.D.2016.%03d" % (ind_arr, self.chn, ind_arr,
+                                                                                  self.chn, self.jday),
+                       starttime=t1 - 5, endtime=t2 + 5)
+        # adjust sampling rate
+        for tr in st:
+            if tr.stats.sampling_rate != self.fs:
+                tr.resample(self.fs)
+        st.filter("highpass", freq=1., zerophase=True)
+        st.trim(t1, t2)
+        # calc hour of day
+        hour = t1.hour + t1.minute / 60. + t1.second / 3600.
+
+        # determine icequake locations from travel time differences
+        # calculate envelopes and determine relative time lags
+        lags = np.zeros(len(arrays))
+        for k, tr in enumerate(st):
+            env = obspy.signal.filter.envelope(tr.data)
+            lags[k] = np.argmax(env) * st[0].stats.delta
+        # calculate travel time differences
+        dlags = np.zeros((len(arrays), len(arrays)))
+        for k in range(len(arrays)):
+            for l in range(len(arrays)):
+                dlags[k, l] = lags[k] - lags[l]
+                dlags[k, k] = 0.
+
+        # setup grid and velocity
+        dx = 25
+        east = np.arange(np.round(e_min, -2), np.round(e_max, -2), dx)
+        north = np.arange(np.round(n_min, -2), np.round(n_max, -2), dx)
+        v = 1670.
+
+        # calcualte traveltimes for all grid points and stations
+        dists = np.zeros((north.size, east.size, len(arrays)))
+        for n in range(north.size):
+            for e in range(east.size):
+                for k, arr in enumerate(arrays):
+                    ind_arr = np.where(arr == array_ids)[0]
+                    dists[n, e, k] = np.sqrt((north[n] - n_coords[ind_arr]) ** 2
+                                             + (east[e] - e_coords[ind_arr]) ** 2)
+        tt = dists / v
+        # calculate travel time differences
+        dtt = np.zeros((tt.shape[0], tt.shape[1], len(arrays), len(arrays)))
+        for k in range(len(arrays)):
+            for l in range(len(arrays)):
+                dtt[:, :, k, l] = tt[:, :, k] - tt[:, :, l]
+
+        # calculate residuals (L1-norm!) for all travel time difference combinations and them up
+        res = np.zeros((tt.shape[0], tt.shape[1]))
+        count = 0.
+        for k in range(len(arrays)):
+            for l in range(len(arrays)):
+                if k > l:
+                    res[:, :] += abs(dtt[:, :, k, l] - dlags[k, l])
+                    count += 1.
+        res /= count
+
+        # data for seismogram plotting
+        data = np.zeros((st[0].data.size, 4))
+        dt = st[0].stats.delta
+        t = np.arange(0, st[0].data.size) * dt
+        for tr in st:
+            ind = int(tr.stats.station[2])
+            tr.data /= abs(tr.data).max()
+            data[:, ind] = tr.data
+
+        # convert coordinates for plotting
+        e_coords_ = (e_coords - e_min) / 2.
+        n_coords_ = (n_coords - n_min) / 2.
+        east = (east - e_min) / 2.
+        north = (north - n_min) / 2.
+        epic_east_ = (epic_east - e_min) / 2.
+        epic_north_ = (epic_north - n_min) / 2.
+        epic_east_std_ = epic_east_std / 2.
+        epic_north_std_ = epic_north_std / 2.
+
+        # radius for plotting beams as wedges and estimated beam error (+-)
+        r = e_max - e_min
+        err = 3.
+
+        # plot map, beamforming results and travel time results
+        # cols = ["m", "g", "r", "c"]
+        cols = ["#0069B4", "#A8322D", "#6F6F6E", "#72791C"]
+        img = mpimg.imread("/media/fabian/Data/PhD/PlaineMorte/AirialImage/PM_2m_res.png")
+        # reverse image y axis
+        for k in range(img.shape[1]):
+            for l in range(img.shape[2]):
+                img[:, k, l] = img[:, k, l][::-1]
+
+        # figure
+        fig = plt.figure(figsize=(20, 8))
+
+        # axis for map and beamforming results
+        ax1 = fig.add_axes([0.01, 0, 0.7, 1])
+        ids = event["aIDs"]
+        ax1.set_title("Event IDs:    " + "  -  ".join(ids))
+        ax1.imshow(img, origin="lower")
+        for arr in arrays:
+            if not np.isnan(event["bazs"][arr]):
+                ind_arr = np.where(arr == array_ids)[0][0]
+                ax1.add_patch(patches.Wedge((e_coords_[ind_arr], n_coords_[ind_arr]), r,
+                                            -(event["bazs"][arr] - 90 + err), -(event["bazs"][arr] - 90 - err),
+                                            color=cols[ind_arr], alpha=0.5))
+        ax1.errorbar(epic_east_, epic_north_, epic_north_std_, epic_east_std_, color="k")
+        tmin = res.min()
+        tmax = res.max() * 0.5
+        if tmax < tmin:
+            tmax = res.max()
+        bp = ax1.pcolormesh(east + dx / 2., north + dx / 2., res, alpha=0.3, cmap="CMRmap", vmin=tmin, vmax=tmax)
+        cb = fig.colorbar(bp, shrink=0.78, pad=0.02)
+        cb.set_label("Residual (s)")
+        ax1.set_xlim(0, (e_max - e_min) / 2. - 20)
+        ax1.set_ylim(0, (n_max - n_min) / 2. - 20)
+        plt.axis("off")
+
+        # axis for seismograms
+        ax2 = fig.add_axes([0.72, 0.090, 0.25, 0.875])
+        for arr in arrays:
+            ind_arr = np.where(arr == array_ids)[0][0]
+            if data[:, ind_arr].all() == 0.:
+                data[:, ind_arr] = np.nan
+            ax2.plot(t, data[:, ind_arr] - (ind_arr + 1) * 1.5, cols[ind_arr])
+        ax2.set_ylim(-7, 0)
+        ax2.set_xlim(t[0], t[-1])
+        ax2.set_yticks([])
+        ax2.set_yticklabels([])
+        ax2.set_xlabel("Time (s)")
+
+        # plt.savefig("/home/fabian/Desktop/%03d_%04d.png" % (self.jday, i+1))
+        plt.show()
+        plt.close()
 
 
     def trigger_events(self, ftmin, ftmax, nsta, nlta, thrsh1, thrsh2, num_trig, plot=True):
@@ -239,13 +449,14 @@ class icequake_locations():
             tt = 3.
             ind_del = []
             for i in range(len(ons) - 1):
+                print(ons[i+1] - ons[i])
                 if (ons[i+1] - ons[i]) < tt:
                     ind_del.append(i+1)
             ons = np.delete(ons, ind_del)
             offs = np.delete(offs, ind_del)
             print("%s: %i events detected!" % (stn, len(ons)))
 
-            # recalculate on/off times (defined as the interval where the envelopy is greater than 0.2 times its max)
+            # recalculate on/off times (defined as the interval where the envelope is greater than 0.2 times its max)
             n = 0.4
             p = 0.6
             env_maxs = np.zeros(len(ons))
@@ -449,159 +660,22 @@ class icequake_locations():
 
 
 
-    def postprocess_eventDB(self):
-        # load all eventDB entries
-        fn = self.path2DBs + "%s/EventDB/%s_EventDB_%03d.txt" % (self.array, self.array, self.jday)
-        id, ts, te = np.genfromtxt(fn, dtype=str, skip_header=7, usecols=(0,1,2), unpack=True)
-        baz = np.loadtxt(fn, skiprows=7, usecols=(7,), unpack=True)
-        # select all entries, where localization did not work
-        ind = np.where(np.isnan(baz) == True)[0]
-        id = id[ind]
-        ts = ts[ind]
-        te = te[ind]
-        # convert ts and te from strings to UTCDateTime objects
-        ts_ = np.zeros(ts.size)
-        te_ = np.zeros(te.size)
-        for i in range(ts_.size):
-            ts_[i] = UTCDateTime(ts[i]).timestamp
-            te_[i] = UTCDateTime(te[i]).timestamp
-        ts = np.copy(ts_)
-        te = np.copy(te_)
-        # calc travel time from margin to center of array (use rayleigh wave as slowest phase)
-        tt = self.r / 1670.
-        ts = ts - tt
-        te = te + tt
-        # read and process data - same processing as in function 'beamform_icequakes'
-        fh = open("./%s/%03d/Cat_%03d_%s_.txt" % (self.array, self.jday, self.jday, self.array), "w")
-        loc.make_eventDB_header(fh)
-        # locate events
-        print("LOCATE EVENTS ...")
-        for k in range(len(ts)):
-            print("event %i/%i ..." % (k, len(ts)-1))
-            try:
-                cont = Stream()
-                for stn in self.stnlist:
-                    cont += read(self.path2mseed + "%s/%s.D/4D.%s..%s.D.2016.%i*" % (stn, self.chn, stn, self.chn, self.jday),
-                                 starttime=UTCDateTime(ts[k])-5, endtime=UTCDateTime(te[k])+5)
-                if len(cont) < len(self.stnlist):
-                    print("only %i stations recorded event - skipped event !" % len(cont))
-                    sys.exit(1)
-                # adjust sampling rate
-                for tr in cont:
-                    if tr.stats.sampling_rate != self.fs:
-                        tr.resample(self.fs)
-                if self.decfact > 1:
-                    cont.decimate(self.decfact)
-                cont.plot()
-                cont.filter("highpass", freq=1., zerophase=True)
-                cont_filt = cont.copy()
-                cont_filt.filter("bandpass", freqmin=self.fmin, freqmax=self.fmax, zerophase=True)
-                cont_filt.trim(UTCDateTime(ts[k]), UTCDateTime(te[k]))
-                cont.trim(UTCDateTime(ts[k]), UTCDateTime(te[k]))
-                df = cont[0].stats.sampling_rate
-                dt = 1./df
-                # prepare for beamforming
-                npts = len(cont[0].data)
-                data = np.zeros((npts, len(self.stnlist)))
-                for i, tr in enumerate(cont):
-                    if tr.stats.npts != npts:
-                        raise ValueError("different number of samples !!!")
-                    data[:, i] = tr.data.astype(float)
-                # adjust window length and delay
-                w_frac = 0.85
-                w_length = w_frac * (te[k] - ts[k])
-                w_delay = (1 - w_frac) * (te[k] - ts[k]) / 10.
-                # plane wave beamforming
-                baz, s, beam = plwave_beamformer(data, coords, self.smin, self.smax, self.ds, 0,
-                                                 self.fmin, self.fmax, df, w_length, w_delay)
-                # circular wave beamforming
-                if self.r < 100.:
-                    dx = 10.
-                    dy = 10.
-                else:
-                    dx = 25.
-                    dy = 25.
-                x, y, z, s_mf, beam_mf = matchedfield_beamformer(data, coords, 1.5*self.r, 1.5*self.r, 0, dx, dy, 0.,
-                                                           self.smin, self.smax, self.ds, 0., self.fmin, self.fmax,
-                                                           self.fmin, self.fmax, df, w_length, w_delay)
-                # indices of max value
-                ind_bmax = np.unravel_index(np.argmax(beam_mf), beam_mf.shape)
-                # calculate baz to center station
-                xmax = x[ind_bmax[0]]
-                ymax = y[ind_bmax[1]]
-                dist2pm05 = np.sqrt((xmax - coords[-1, 0])**2 + (ymax - coords[-1, 1])**2)
-                if dist2pm05 > self.r:
-                    baz_mf = np.degrees(np.arctan2((xmax - coords[-1, 0]), (ymax - coords[-1, 1]))) * (-1.) + 90.
-                    if baz_mf < 0.:
-                        baz_mf += 360.
-                    baz_mf = "%i" % int(np.round(baz_mf))
-                else:
-                    baz_mf = "nan"
-
-
-
-                fig = plt.figure(figsize=(20,6))
-                ax1 = fig.add_subplot(131)
-                t = np.arange(0, npts*dt, dt)
-                for i in range(len(self.stnlist)):
-                    d = data[:, i]
-                    d /= abs(data).max()
-                    d -= i * 1.5
-                    ax1.plot(t, d, "k")
-                    ax1.text(t[3], np.mean(d) + 0.3, self.stnlist[i], fontsize=16)
-                ax1.set_xlabel("seconds")
-                ax1.set_yticklabels([])
-                ax1.set_title("starttime: %s" % UTCDateTime(ts[k]))
-                ax2 = fig.add_subplot(132, projection="polar")
-                ax2.set_theta_direction(-1)
-                ax2.set_theta_zero_location("N")
-                im1 = ax2.pcolormesh(np.radians(baz), s, beam, cmap="viridis")
-                ind_baz = np.argmax(np.amax(beam, axis=0))
-                ind_slow = np.argmax(np.amax(beam, axis=1))
-                ax2.plot(np.radians(baz[ind_baz]), s[ind_slow], "ko", markersize=2)
-                ax2.set_title("pow = %.3f - vel = %.3f km/s - baz = %i deg"
-                              % (beam.max(), 1./s[ind_slow], baz[ind_baz]))
-                ax3 = fig.add_subplot(133)
-                im2 = ax3.pcolormesh(x, y, beam_mf[:,:,ind_bmax[2]], cmap="viridis")
-                ax3.plot(coords[:,0], coords[:,1], "w^", markersize=12)
-                ax3.set_title("pow = %.3f - vel = %.3f km/s - baz = %s deg"
-                              % (beam_mf.max(), 1./s_mf[ind_bmax[2]], baz_mf))
-                ax3.set_xlim(x.min(), x.max())
-                ax3.set_ylim(y.min(), y.max())
-                pth = "./%s/%03d/" % (self.array, self.jday)
-                id_ = id[k] + "_.png"
-                #plt.show()
-                plt.savefig(pth + id_, dpi=80)
-                plt.close()
-
-            except:
-                pass
-
-
-
-
-
-    def associate_icequakes(self, narr, plot=False):
+    def associate_icequakes(self, arrays, powmin, narr):
+        """
+        Function to associate events recorded on different arrays.
+        :param arrays: list containing arrays which are used for association
+        :param powmin: minimum beam power required to use event for association
+        :param narr: number of arrays required for triangulation
+        :return: list containing dictionaries with information of associated events
+        """
         # read eventDB of all arrays for jday
         dict_cat = OrderedDict()
-        powmin = 0.75    # beam power threshold
-        # array A0
-        cat_A0 = loc.read_eventDB("A0", powmin)
-        if cat_A0 is not None:
-            dict_cat["A0"] = cat_A0
-        # array A1
-        cat_A1 = loc.read_eventDB("A1", powmin)
-        if cat_A1 is not None:
-            dict_cat["A1"] = cat_A1
-        # array A2
-        cat_A2 = loc.read_eventDB("A2", powmin)
-        if cat_A2 is not None:
-            dict_cat["A2"] = cat_A2
-        # array A3
-        cat_A3 = loc.read_eventDB("A3", powmin)
-        if cat_A3 is not None:
-            dict_cat["A3"] = cat_A3
-
+        for arr in arrays:
+            DB_arr = icequake_locations.read_eventDB(self, arr, powmin)
+            if DB_arr is not None:
+                dict_cat[arr] = DB_arr
+        # update array list
+        arrays = list(dict_cat.keys())
 
         # test if at least 2 arrays have detected icequakes for specified julday
         if len(dict_cat) < 2:
@@ -611,55 +685,35 @@ class icequake_locations():
             print("%i arrays detected icequakes on DOY %03d - associate events ..." % (len(dict_cat), self.jday))
 
 
-        # prepare for association
-        assoc_iqs = []
-        keys = list(dict_cat.keys())
-
         # read trigger on times and convert to timestamp format
         ons = []
-        on1 = dict_cat[keys[0]][1]
-        for i in range(on1.size):
-            on1[i] = UTCDateTime(on1[i]).timestamp
-        on1 = on1.astype(float)
-        ons.append(on1)
-
-        on2 = dict_cat[keys[1]][1]
-        for i in range(on2.size):
-            on2[i] = UTCDateTime(on2[i]).timestamp
-        on2 = on2.astype(float)
-        ons.append(on2)
-
-        if len(dict_cat) > 2:
-            on3 = dict_cat[keys[2]][1]
-            for i in range(on3.size):
-                on3[i] = UTCDateTime(on3[i]).timestamp
-            on3 = on3.astype(float)
-            ons.append(on3)
-
-        if len(dict_cat) > 3:
-            on4 = dict_cat[keys[3]][1]
-            for i in range(on4.size):
-                on4[i] = UTCDateTime(on4[i]).timestamp
-            on4 = on4.astype(float)
-            ons.append(on4)
+        for arr in arrays:
+            on_x = dict_cat[arr][1]
+            for i in range(on_x.size):
+                on_x[i] = UTCDateTime(on_x[i]).timestamp
+            on_x = on_x.astype(float)
+            ons.append(on_x)
 
         # max travel time: PM35 -> PM05 assume vel=1500 m/s
         tt = 2377. / 1500.
 
-        # loop over ons ,compare to other ons
+        # prepare for association
+        assoc_iqs = []
+
+        # loop over ons, compare to other ons
         for i in range(len(ons)-1):
             on = ons[i]
             for j in range(on.size):
                 dict_ind = {}
-                dict_ind[keys[i]] = np.array([j])
+                dict_ind[arrays[i]] = j
 
                 # select other next on to compare
                 ind_on2_ = i+1
                 if ind_on2_ >= len(ons):
                     ind_on2_ -= len(ons)
                 ind2 = np.where((on[j]-tt < ons[ind_on2_]) & (ons[ind_on2_] < on[j]+tt))[0]
-                if len(ind2) > 0:
-                    dict_ind[keys[ind_on2_]] = ind2
+                if len(ind2) == 1:
+                    dict_ind[arrays[ind_on2_]] = ind2[0]
 
                 # select second next on to compare
                 if len(dict_cat) > 2:
@@ -667,8 +721,8 @@ class icequake_locations():
                     if ind_on3_ >= len(ons):
                         ind_on3_ -= len(ons)
                     ind3 = np.where((on[j]-tt < ons[ind_on3_]) & (ons[ind_on3_] < on[j]+tt))[0]
-                    if len(ind3) > 0:
-                        dict_ind[keys[ind_on3_]] = ind3
+                    if len(ind3) == 1:
+                        dict_ind[arrays[ind_on3_]] = ind3[0]
 
                 # select third next on to compare
                 if len(dict_cat) > 3:
@@ -676,30 +730,13 @@ class icequake_locations():
                     if ind_on4_ >= len(ons):
                         ind_on4_ -= len(ons)
                     ind4 = np.where((on[j]-tt < ons[ind_on4_]) & (ons[ind_on4_] < on[j]+tt))[0]
-                    if len(ind4) > 0:
-                        dict_ind[keys[ind_on4_]] = ind4
+                    if len(ind4) == 1:
+                        dict_ind[arrays[ind_on4_]] = ind4[0]
 
-                # append only to associated event, if dict_ind has at least 3 entries
+                # append only to associated event, if dict_ind has at least narr entries
                 if len(dict_ind) >= narr:
                     assoc_iqs.append(dict_ind)
 
-        # remove entries where two events are associated
-        ind_del = []
-        for i in range(len(assoc_iqs)):
-            vals = list(assoc_iqs[i].values())
-            for val in vals:
-                if len(val) > 1:
-                    ind_del.append(i)
-        dels = 0
-        for i in range(len(ind_del)):
-            del assoc_iqs[ind_del[i]-dels]
-            dels += 1
-
-        # convert to integers
-        for i in range(len(assoc_iqs)):
-            keys_ = list(assoc_iqs[i].keys())
-            for k in keys_:
-                assoc_iqs[i][k] = int(assoc_iqs[i][k])
 
         # delete multiple entries
         assoc_iqs_ = assoc_iqs
@@ -709,84 +746,119 @@ class icequake_locations():
                 assoc_iqs.append(assoc_iqs_[i])
         print("Associated %i events!" % len(assoc_iqs))
 
-        # coordinates of center stations
-        e_coords = np.loadtxt("/media/fabian/Data/PhD/PlaineMorte/Data/Coordinates/coords_center_stations.txt",
-                              usecols=(1,), unpack=True)
-        n_coords = np.loadtxt("/media/fabian/Data/PhD/PlaineMorte/Data/Coordinates/coords_center_stations.txt",
-                              usecols=(2,), unpack=True)
-        
-        iq_cat = "Locations/icequake_catalog.txt"
-        fh = open(iq_cat, "a")
-        for i in range(len(assoc_iqs)):
-            print(i)
-            # retrieve data of event
-            ev = assoc_iqs[i]
-            arrays = list(ev.keys())
-            arrays.sort()
+        # create dictionary gathering some information for each associated event
+        assoc_iqs_ = assoc_iqs
+        assoc_iqs = []
+        for i in range(len(assoc_iqs_)):
+            event = OrderedDict()
+            # event ID
+            event["EventID"] = "%03d_%04d" % (self.jday, i)
+            # arrays
+            arrays_ = list(assoc_iqs_[i].keys())
+            arrays_.sort()
+            event["arrays"] = arrays_
+            # array IDs, avg. trigger on time, avg. trigger duration, baz
             ids = []
-            n_arrays = len(arrays)
-            inds = np.zeros(n_arrays, dtype=int)
-            ons = np.zeros(n_arrays)
-            offs = np.zeros(n_arrays)
-            bazs = np.zeros(n_arrays)
-            slopes = np.zeros(n_arrays)
-            intercepts = np.zeros(n_arrays)
-            for k, array in enumerate(arrays):
-                ind = ev[array]
-                # icequake id
-                iq_id = dict_cat[array][0]
-                ids.append(iq_id[ind])
-                # icequake on, off, baz
-                on = dict_cat[array][1]
-                ons[k] = UTCDateTime(float(on[ind]))
-                off = dict_cat[array][2]
-                offs[k] = UTCDateTime(off[ind])
-                baz = dict_cat[array][3]
-                bazs[k] = baz[ind]
-                print("%s: %s" % (array, bazs[k]))
-                # slope and y-axis intersection of beams
-                slopes[k] = 1. / np.tan(np.radians(bazs[k]))
-                array_ind = int(array[1])
-                intercepts[k] = n_coords[array_ind] - slopes[k] * e_coords[array_ind]
+            tons = []
+            toffs = []
+            bazs = {}
+            for arr in arrays_:
+                ids.append(dict_cat[arr][0][assoc_iqs_[i][arr]])
+                tons.append(float(dict_cat[arr][1][assoc_iqs_[i][arr]]))
+                toffs.append(UTCDateTime(dict_cat[arr][2][assoc_iqs_[i][arr]]).timestamp)
+                bazs[arr] = dict_cat[arr][3][assoc_iqs_[i][arr]]
+            ids.sort()
+            event["aIDs"] = ids
+            event["trig_time"] = np.mean(tons)
+            event["trig_dur"] = np.mean(np.array(toffs) - np.array(tons))
+            event["bazs"] = bazs
+            assoc_iqs.append(event)
 
-            # calculate intersection of beams
-            epics_east = []
-            epics_north = []
+        return assoc_iqs
+
+
+    def locate_events(self, assoc_iqs, fn_cat, fn_coords, plot=False):
+        """
+        Function to locate associated icequakes using triangulation.
+        :param assoc_iqs: list containing containing event dictionaries
+        :param fn_cat: file to which results are written
+        :param fn_coords: file containing array center coordinates
+        :param plot: if True, shows a map with the location result for each event
+        :return: writes results to icequake catalog
+        """
+
+        # coordinates of array centers
+        e_coords, n_coords = np.loadtxt(fn_coords, usecols=(1,2), unpack=True)
+        array_ids = np.genfromtxt(fn_coords, usecols=(0,), dtype=str)
+
+        # open icequake catalog file
+        fh = open(fn_cat, "a")
+
+        # loop over associated events and calculate intersection of beams
+        for i in range(len(assoc_iqs)):
+            # slope and y-axis intersection of beams
+            event = assoc_iqs[i]
+            arrays = event["arrays"]
+            slopes = {}
+            intcpts = {}
+            for arr in arrays:
+                ind_arr = np.where(arr == array_ids)[0]
+                slopes[arr] = 1. / np.tan(np.radians(event["bazs"][arr]))
+                intcpts[arr] = n_coords[ind_arr][0] - slopes[arr] * e_coords[ind_arr][0]
+            event["slopes"] = slopes
+            event["intcpts"] = intcpts
+
+            # convert baz values to degree range [0, 180]
+            event["bazs_"] = dict(event["bazs"])
+            for arr in arrays:
+                if not np.isnan(event["bazs_"][arr]):
+                    if event["bazs_"][arr] > 180.:
+                        event["bazs_"][arr] -= 180.
+
+
+            # prepare for calculation of beam intersections
+            epics_east = []     # epicenters east coordinate
+            epics_north = []    # epicenters north coordinate
             weights = []
-            bazs_ = np.copy(bazs)
-            nbaz = np.where(np.isnan(bazs_) == False)[0].size
-            for k in range(bazs_.size):
-                if not np.isnan(bazs_[k]):
-                    if bazs_[k] > 180.:
-                        bazs_[k] -= 180.
-            for k in range(1,len(arrays)):
-                if bazs_[0] != bazs_[k]:
-                    iq_east = (intercepts[k] - intercepts[0]) / (slopes[0] - slopes[k])
+
+            # calculate intersection of first beam with all following beam
+            for j in range(1,len(arrays)):
+                if event["bazs_"][arrays[0]] != event["bazs_"][arrays[j]]:
+                    iq_east = (event["intcpts"][arrays[j]] - event["intcpts"][arrays[0]])\
+                            / (event["slopes"][arrays[0]] - event["slopes"][arrays[j]])
                 else:
                     iq_east = np.nan
                 epics_east.append(iq_east)
-                iq_north = slopes[0] * iq_east + intercepts[0]
+                iq_north = event["slopes"][arrays[0]] * iq_east + event["intcpts"][arrays[0]]
                 epics_north.append(iq_north)
-                weights.append(abs(bazs_[k] - bazs[0]))
+                weights.append(abs(event["bazs_"][arrays[j]] - event["bazs_"][arrays[0]]))
+
+            # calculate intersection of second beam with all following beams (if applicable)
             if len(arrays) > 2:
                 for l in range(2,len(arrays)):
-                    if bazs_[1] != bazs_[l]:
-                        iq_east = (intercepts[l] - intercepts[1]) / (slopes[1] - slopes[l])
+                    if event["bazs_"][arrays[1]] != event["bazs_"][arrays[l]]:
+                        iq_east = (event["intcpts"][arrays[l]] - event["intcpts"][arrays[1]]) \
+                                  / (event["slopes"][arrays[1]] - event["slopes"][arrays[l]])
                     else:
                         iq_east = np.nan
                     epics_east.append(iq_east)
-                    iq_north = slopes[1] * iq_east + intercepts[1]
+                    iq_north = event["slopes"][arrays[1]] * iq_east + event["intcpts"][arrays[1]]
                     epics_north.append(iq_north)
-                    weights.append(abs(bazs_[l] - bazs_[1]))
+                    weights.append(abs(event["bazs_"][arrays[l]] - event["bazs_"][arrays[1]]))
+
+            # calculate intersection of third beam with the last beam (if applicable)
             if len(arrays) == 4:
-                if bazs_[2] != bazs_[3]:
-                    iq_east = (intercepts[3] - intercepts[2]) / (slopes[2] - slopes[3])
+                if event["bazs_"][arrays[2]] != event["bazs_"][arrays[3]]:
+                    iq_east = (event["intcpts"][arrays[3]] - event["intcpts"][arrays[2]])\
+                            / (event["slopes"][arrays[2]] - event["slopes"][arrays[3]])
                 else:
                     iq_east = np.nan
                 epics_east.append(iq_east)
-                iq_north = slopes[2] * iq_east + intercepts[2]
+                iq_north = event["slopes"][arrays[2]] * iq_east + event["intcpts"][arrays[2]]
                 epics_north.append(iq_north)
-                weights.append(abs(bazs_[3] - bazs[2]))
+                weights.append(abs(event["bazs_"][arrays[3]] - event["bazs_"][arrays[2]]))
+            del event["bazs_"]
+
 
             # remove nans
             epics_east = np.array(epics_east)
@@ -802,7 +874,7 @@ class icequake_locations():
             weights = abs(weights)
             weights /= 90.
 
-            # calculate average and error
+            # calculate average and standard deviation
             if len(epics_east) > 0:
                 epic_east = np.average(epics_east, weights=weights)
                 epic_north = np.average(epics_north, weights=weights)
@@ -816,208 +888,19 @@ class icequake_locations():
                 epic_north_std = np.nan
                 weights_mean = np.nan
 
+            # update event dictionary
+            event["epicntr"] = [epic_east, epic_north]
+            event["epicntr_std"] = [epic_east_std, epic_north_std]
+            event["weight"] = weights_mean
+            bazs = np.array(event["bazs"].values())
+            bazs = np.delete(bazs, np.nan)
+            event["num_loc"] = len(bazs)
 
-            #print(weights)
-            #print(epic_east, epic_north)
-            #print(epic_east_std, epic_north_std)
-		
-            # write header (if file is empty)
-            if os.stat(iq_cat).st_size == 0:
-                fh.write("# 1. col:  trigger onset\n")
-                fh.write("# 2. col:  epicenter easting\n")
-                fh.write("# 3. col:  epicenter northing\n")
-                fh.write("# 4. col:  epicenter easting std\n")
-                fh.write("# 5. col:  epicenter northing std\n")
-                fh.write("# 6. col:  average weight\n")
-                fh.write("# 7. col:  number of arrays that detected event\n")
-                fh.write("# 8. col:  number of arrays that located event\n")
-                fh.write("# 9. col:  event id array A0\n")
-                fh.write("# 10. col:  event id array A1\n")
-                fh.write("# 11. col: event id array A2\n")
-                fh.write("# 12. col: event id array A3\n")
-                fh.write("# =============================================\n")
-                fh.flush()
+            # wirte to file
+            icequake_locations.write_IQcat_entry(self, fh, fn_cat, event)
 
-            # write data to file
-            id_A0 = np.nan
-            id_A1 = np.nan
-            id_A2 = np.nan
-            id_A3 = np.nan
-            for id in ids:
-                if "A0" in id:
-                    id_A0 = id
-                elif "A1" in id:
-                    id_A1 = id
-                elif "A2" in id:
-                    id_A2 = id
-                elif "A3" in id:
-                    id_A3 = id
-            line = "%s  %8.1f  %8.1f  %6.1f  %6.1f  %5.3f  %i  %i  %11s  %11s  %11s  %11s" % (UTCDateTime(ons.min()),
-                        epic_east, epic_north, epic_east_std, epic_north_std, weights_mean, n_arrays, nbaz, 
-                        id_A0, id_A1, id_A2, id_A3)
-            fh.write(line + "\n")
-
-
+            # show map
             if plot:
-                # coordinate bounds of image
-                e_min = 602909.
-                e_max = 608674.
-                n_min = 135425.
-                n_max = 138507.
-    
-    
-                # data of center stations
-                trig_dur = np.zeros(inds.size)          # trigger duration
-                for k in range(inds.size):
-                    trig_dur[k] = offs[k] - ons[k]
-                # start and endtime of event
-                trig_dur = np.average(trig_dur)
-                t1 = UTCDateTime(min(ons) - trig_dur)
-                t2 = UTCDateTime(max(offs) + 1.5*trig_dur)
-                # read data
-                st = Stream()
-                for array in arrays:
-                    array_ind = int(array[1])
-                    st += read(self.path2mseed + "PM%i5/%s.D/4D.PM%i5..%s.D.2016.%03d" % (array_ind, self.chn, array_ind,
-                               self.chn, self.jday), starttime=t1-5, endtime=t2+5)
-                # adjust sampling rate
-                for tr in st:
-                    if tr.stats.sampling_rate != self.fs:
-                        tr.resample(self.fs)
-                st.filter("highpass", freq=1., zerophase=True)
-                st.trim(t1, t2)
-                # calc hour of day
-                hour = t1.hour + t1.minute / 60. + t1.second / 3600.
-    
-    
-                # determine icequake locations from travel time differences
-                # calculate envelopes and determine relative time lags
-                lags = np.zeros(n_arrays)
-                for k, tr in enumerate(st):
-                    env = obspy.signal.filter.envelope(tr.data)
-                    lags[k] = np.argmax(env) * st[0].stats.delta
-                # calculate travel time differences
-                dlags = np.zeros((n_arrays, n_arrays))
-                for k in range(n_arrays):
-                    for l in range(n_arrays):
-                        dlags[k,l] = lags[k] - lags[l]
-                        dlags[k,k] = 0.
-    
-                # setup grid and velocity
-                dx = 25
-                east = np.arange(np.round(e_min, -2), np.round(e_max, -2), dx)
-                north = np.arange(np.round(n_min, -2), np.round(n_max, -2), dx)
-                v = 1670.
-    
-                # calcualte traveltimes for all grid points and stations
-                dists = np.zeros((north.size, east.size, n_arrays))
-                for n in range(north.size):
-                    for e in range(east.size):
-                        for k in range(inds.size):
-                            dists[n, e, k] = np.sqrt((north[n] - n_coords[inds[k]])**2 + (east[e] - e_coords[inds[k]])**2)
-                tt = dists / v
-                # calculate travel time differences
-                dtt = np.zeros((tt.shape[0], tt.shape[1], n_arrays, n_arrays))
-                for k in range(n_arrays):
-                    for l in range(n_arrays):
-                        dtt[:,:,k,l] = tt[:,:,k] - tt[:,:,l]
-    
-                # calculate residuals (L1-norm!) for all travel time difference combinations and them up
-                res = np.zeros((tt.shape[0],tt.shape[1]))
-                count = 0.
-                for k in range(n_arrays):
-                    for l in range(n_arrays):
-                        if k > l:
-                            res[:,:] += abs(dtt[:,:,k,l] - dlags[k,l])
-                            count += 1.
-                res /= count
-    
-    
-                # convert coordinates for plotting
-                e_coords_ = (e_coords - e_min) / 2.
-                n_coords_ = (n_coords - n_min) / 2.
-                east = (east - e_min) / 2.
-                north = (north - n_min) / 2.
-                epic_east_ = (epic_east - e_min) / 2.
-                epic_north_ = (epic_north - n_min) / 2.
-                epic_east_std_ = epic_east_std / 2.
-                epic_north_std_ = epic_north_std / 2.
-    
-                # radius for plotting beams as wedges and estimated beam error (+-)
-                r = e_max - e_min
-                err = 3.
-    
-    
-                # data for seismogram plotting
-                data = np.zeros((st[0].data.size,4))
-                pfreq = np.zeros(4)
-                dt = st[0].stats.delta
-                t = np.arange(0,st[0].data.size) * dt
-                for tr in st:
-                    ind = int(tr.stats.station[2])
-                    tr.data /= abs(tr.data).max()
-                    data[:,ind] = tr.data
-                    fft = np.fft.rfft(tr.data)
-                    freq = np.fft.rfftfreq(tr.data.size, dt)
-                    pf = freq[np.argmax(abs(fft))]
-                    pfreq[ind] = pf
-                # plot map, beamforming results and travel time results
-                #cols = ["m", "g", "r", "c"]
-                cols = ["#0069B4", "#A8322D", "#6F6F6E", "#72791C"]
-                img = mpimg.imread("/media/fabian/Data/PhD/PlaineMorte/AirialImage/PM_2m_res.png")
-                # reverse image y axis
-                for k in range(img.shape[1]):
-                    for l in range(img.shape[2]):
-                        img[:,k,l] = img[:,k,l][::-1]
-                # figure
-                fig = plt.figure(figsize=(20,8))
-                # axis for map
-                ax1 = fig.add_axes([0.01,0,0.7,1])
-                ids.sort()
-                ax1.set_title("Event IDs:    " + "  -  ".join(ids))
-                ax1.imshow(img, origin="lower")
-                for k in range(len(bazs)):
-                    if not np.isnan(bazs[k]):
-                        ind = int(arrays[k][1])
-                        ax1.add_patch(patches.Wedge((e_coords_[ind], n_coords_[ind]), r, -(bazs[k]-90+err), -(bazs[k]-90-err),
-                                      color=cols[ind], alpha=0.5))
-                ax1.errorbar(epic_east_, epic_north_, epic_north_std_, epic_east_std_, color="k")
-                tmin = res.min()
-                tmax = res.max() * 0.5
-                if tmax < tmin:
-                    tmax = res.max()
-                #bp = ax1.pcolormesh(east+dx/2., north+dx/2., res, alpha=0.3, cmap="CMRmap", vmin=tmin, vmax=tmax)
-                #cb = fig.colorbar(bp, shrink=0.78, pad=0.02)
-                #cb.set_label("Residual (s)")
-                ax1.set_xlim(0, (e_max - e_min)/2. - 20)
-                ax1.set_ylim(0, (n_max - n_min)/2. - 20)
-                plt.axis("off")
-                # axis for seismograms
-                #ax2 = fig.add_axes([0.72,0.25,0.25,0.715])
-                ax2 = fig.add_axes([0.72,0.090,0.25,0.875])
-                for k in range(4):
-                    if data[:,k].all() == 0.:
-                        data[:,k] = np.nan
-                    ax2.plot(t, data[:,k]-(k+1)*1.5, cols[k])
-                    #if pfreq[k] != 0.:
-                    #    ax2.text(0, -(k+1)*1.4, "p.freq: %.1f" % pfreq[k])
-                ax2.set_ylim(-7,0)
-                ax2.set_xlim(t[0], t[-1])
-                ax2.set_yticks([])
-                ax2.set_yticklabels([])
-                ax2.set_xlabel("Time (s)")
-                # axis for hour of day
-                #ax3 = fig.add_axes([0.72,0.035,0.25,0.1])
-                #ax3.axvline(hour, color="k", linewidth=3)
-                #ax3.set_xlim(0,24)
-                #ax3.set_yticks([])
-                #ax3.set_yticklabels([])
-                #ax3.set_title("Hour of day %03d: %.2f" % (self.jday, hour))
-                #plt.axis("off")
-    
-    
-                plt.savefig("/home/fabian/Desktop/%03d_%04d.png" % (self.jday, i+1))
-                #plt.show()
-                plt.close()
-            print("==================")
+                icequake_locations.plot_event_loc(self, event, fn_coords)
+
         fh.close()
