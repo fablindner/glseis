@@ -1,5 +1,6 @@
 from obspy import read, UTCDateTime, Stream, Trace
 import numpy as np
+import scipy
 from obspy.signal import PPSD
 import matplotlib.pyplot as plt
 from matplotlib import mlab
@@ -7,7 +8,6 @@ import matplotlib.dates as mdates
 import datetime as dtime
 import warnings
 import numpy.ma as ma
-import sys
 
 
 def medianPSD(stream, win_len, overlap, t1, t2):
@@ -80,47 +80,119 @@ class spectral_analysis():
         self.chn = chn
         self.metadata = metadata
         self.dec_fact = dec_fact
-        
+        self.times = None
+        self.freqs = None
+        self.specs = None
+        self.blocks = None
 
-    def ppsd(self, fmin=1., fmax=100., special_handling=None, filename=None, save=False):
+
+    def _interpolate_ppsd(self, freqs, spectrogram, fmin, fmax):
         """
-        Function that calculates the probabilistic power spectral density
-        of a given station-channel combination.
+        Funktion to downsample spectrogram by interpolation.
+        :param freqs: Frequency vector returned by mlab.spectrogram
+        :param spectrogram: Spectrogram returned by mlab.spectrogram (potentially postprocessed)
+        :param fmin: Minimum frequency of interest.
+        :param fmax: Maximum frequency of interest.
+        :return: New frequency vector and associated downsampled (interpolated) spectrogram.
+        """
+        # frequencies at which ppsd is evaluated
+        f_new = np.logspace(np.log10(fmin), np.log10(fmax), 7500)
 
-        :type fmin: float
-        :param fmin: Minimum frequency to show in PPSD plot
-        :type fmax: float
-        :param fmax: Maximum frequency to show in PPSD plot
+        # interpolate ppsds (colums of spectrogram) at the new frequencies
+        wins = spectrogram.shape[1]
+        spec_new = np.zeros((f_new.size, wins))
+        for i in range(wins):
+            f = scipy.interpolate.interp1d(freqs, spectrogram[:,i], kind="cubic")
+            spec_new[:,i] = f(f_new)
+        return f_new, spec_new
+
+
+    def _convert4saving(self):
+        """
+        "Flattens" the lists, i.e. concatenates the spectrograms and times associated with distinct continous
+        data segments. The variable blocks stores indices of the individual continuous data segments. This is
+        necessary since for plotting the data has to be transformed back to the old format because the flattened
+        times are not linearly increasing (gaps between the individual continuous data segments). Still, the
+        flattened format is justified because it simplifies the search for specific times significantly.
+
+        :return: None. Data is stored to Class.
         """
 
-        # read list of files
-        files = np.genfromtxt(self.filist, dtype=str)
-        n = files.size
-        # if no paz information is given, divide by 1.0
-        if self.metadata == None:
-            self.metadata = {"sensitivity": 1.0}
-        # loop over files
-        for i in range(n):
-            st = read(files[i])
-            st.merge()
-            st.decimate(self.dec_fact)
-            if len(st) > 1:
-                warnings.warn("more than one trace in st")
-            tr = st.select(station=self.stn, channel=self.chn)[0]
-            # at first run, initialize PPSD instance
-            if i == 0:
-                # "is_rotational_data" is set in order not to differentiate that data
-                inst = PPSD(tr.stats, metadata=self.metadata, special_handling=special_handling)
-            # add trace
-            print("add trace %s ..." % tr)
-            inst.add(tr)
-        print("number of psd segments:", len(inst.current_times_used))
-        inst.plot(show_noise_models=True, xaxis_frequency=True, period_lim=(fmin, fmax), filename=filename)
-        if save:
-            inst.save_npz("ppsd_%s_%s.npz" % (self.stn, self.chn))
+        _times = []
+        _specs = []
+        blocks = []
+
+        # "flatten" the lists but keep track of continuous data segments using the blocks variable
+        for i in range(len(self.specs)):
+            blocks.append(np.arange(len(_times), len(_times) + self.times[i].size))
+            for j in range(self.specs[i].shape[1]):
+                _times.append(self.times[i][j])
+                _specs.append(self.specs[i][:, j])
+
+        # update specs, times and store blocks
+        self.times = _times
+        self.specs = _specs
+        self.blocks = blocks
 
 
-    def spectrogram(self, nfft, overlap, fmin=1, fmax=50, downsample=None, starttime=None, endtime=None, show=True, verbose=True):
+    def _load_data(self):
+        """
+        Loads the spectrogram data for self.stn and self.chn.
+
+        :return: None. Data is stored to Class.
+        """
+
+        data = np.load("./Data/Specs/specs_%s_%s.npz" % (self.stn, self.chn))["arr_0"].item()
+        self.times = data["times"]
+        self.freqs = data["freqs"]
+        self.specs = data["specs"]
+        self.blocks = data["blocks"]
+
+
+    def _convert4plotting(self):
+        """
+        This is the converse of function _convert4saving(). Transforms the flattened data format
+        (stored as single spectrograms with window length nfft) to block format (stores blocks with
+        spectrograms and times corresponding to continuous data segments).
+
+        :return: Returns the Re-formatted times and spectrograms.
+        """
+
+        _times = []
+        _specs = []
+        _blocks = self.blocks
+
+        # transform back to block format for plotting. Necessary since pcolormesh requires regular
+        # grids for plotting. However, the concatenated times of several continuous data segments
+        # are not regularly spaced (gaps between the segments). But times within individual data segments
+        # are regularly spaced!
+        for i in range(len(_blocks)):
+            _times.append(np.array(self.times)[_blocks[i]])
+            spec = list(np.array(self.specs)[_blocks[i]])
+            spec = np.stack(spec).T
+            _specs.append(spec)
+
+        return _times, _specs
+
+
+    def _get_indices(self, t):
+        """
+        Determines the indices (block format) for a given time. The first indice adresses the block, the
+        second indice adresses the element within this block associated with the given time.
+        :param t: Time of interest.
+        :return: Returns a tuple of indices (see description above) to access a spectrogram associated with
+            the given time. Returns the spectrogram which is closest to the given time.
+        """
+        ind_t = np.argmin(abs(np.array(self.times) - t.timestamp))
+        for i in range(len(self.blocks)):
+            if ind_t in self.blocks[i]:
+                ind_b = i
+        ind_i = np.where(self.blocks[ind_b] == ind_t)[0][0]
+        return (ind_b, ind_i)
+
+
+    def calc_spectrogram(self, nfft, overlap, fmin=1, fmax=50, downsample=None, starttime=None, endtime=None, show=True,
+                         smooth=True, interpolate=True):
         """
         This routine computes spectrograms of all files contained in 'filist'.
         The number of returned spectrograms may differ from the number of files
@@ -145,8 +217,10 @@ class spectral_analysis():
         :type show: boolean
         :param show: If True, spectrogram is displayed. Otherwise,  times, fruencies and 
             spectrogram are returned.
-        :type verbose: boolen
-        :param verbose: if True, information on processing is printed
+        :type smooth: boolean
+        :param smooth: If True, spectrogram is smoothed using a Gaussian filter.
+        :type interpolate: boolean
+        :param interpolate: If True, spectrogram is "downsampled" through interpolation.
 
         :return: list, np.array, list
             1. list contains arrays of timestamps corresponding to the spectrograms
@@ -198,8 +272,7 @@ class spectral_analysis():
         specs = []
         times = []
         # loop over cont. segments and compute spectrograms
-        if verbose:
-            print("calculating spectrograms ...")
+        print("calculating spectrograms ...")
         for s in range(nseg + 1):
             # empty stream, where single files are added to
             master = Stream()
@@ -215,8 +288,7 @@ class spectral_analysis():
                 master += st[0]
                 master.merge()
                 master.detrend()
-            if verbose:
-                print(master[0].stats.starttime)
+            print(master[0].stats.starttime)
             # data array of current cont. segment
             data = master[0].data
             if self.metadata is not None:
@@ -226,60 +298,170 @@ class spectral_analysis():
             # finally...calculate spectrogram of current cont. segment
             spectrogram, freqs, time = mlab.specgram(data, nfft, fs, noverlap=nlap, mode="psd")
             # add timestamp of stime of current cont. segment in order to obtain absolute time
+            time -= time[0]
             time += stimes_seg[s]
+
             # discard frequencies which are out of range fmin - fmax
-            ind = np.where((freqs >= fmin) & (freqs <= fmax))[0]
-            freqs = freqs[ind]
-            spectrogram = spectrogram[ind, :]
+            ind = np.concatenate((np.where(freqs < fmin)[0][:-1], np.where(freqs > fmax)[0][1:]))
+            freqs = np.delete(freqs, ind)
+            spectrogram = np.delete(spectrogram, ind, axis=0)
+
+            # smooth spectrogram
+            if smooth:
+                spectrogram = scipy.ndimage.gaussian_filter(spectrogram, sigma=(30, 0.75))
+
+            # "downsample" spectrogram
+            if interpolate:
+                freqs, spectrogram = self._interpolate_ppsd(freqs, spectrogram, fmin, fmax)
+
             # append spectrogram and corresponding times to the lists
             specs.append(spectrogram)
             times.append(time)
 
-        if show:
-            if verbose:
-                print("plotting spectrograms ...")
-            # for plotting proper timestring
-            dateconv = np.vectorize(dtime.datetime.utcfromtimestamp)
-            xfmt = mdates.DateFormatter("%m/%d")
-            # initialize arrays for min and max values of all spectrogram
-            mins = np.zeros(len(specs))
-            maxs = np.zeros(len(specs))
-            # convert spectrograms to dB scale and obtain min and max values
-            for ii in range(len(specs)):
-                specs[ii] = 10*np.log10(specs[ii])
-                mins[ii], maxs[ii] = specs[ii].min(), specs[ii].max()
-                times[ii] = dateconv(times[ii])
-            # delete nans and infs
-            nans_mins = np.where(np.isnan(mins) | np.isinf(mins))
-            nans_maxs = np.where(np.isnan(maxs) | np.isinf(maxs))
-            mins = np.delete(mins, nans_mins[0])
-            maxs = np.delete(maxs, nans_maxs[0])
-            # get min and max values
-            absmin = mins.min()
-            absmax = maxs.max()
-            # sample down
-            if downsample is not None:
-                freqs = freqs[0::downsample]
-                for ii in range(len(specs)):
-                    specs[ii] = specs[ii][0::downsample, :]
-            # create figure
-            fig = plt.figure(figsize=(10,3))
-            ax = fig.add_subplot(111)
-            for ii in range(len(specs)):
-                im = ax.pcolormesh(times[ii], freqs, specs[ii], cmap="viridis", vmin=absmin, vmax=absmax, rasterized=True)
-            ax.set_ylim(fmin, fmax)
-            ax.set_xlim(times[0][0], times[-1][-1])
-            ax.set_ylabel("Frequency (Hz)")
-            ax.set_xlabel("Date (mm/dd)")
-            ax.set_yscale("log")
-            ax.xaxis.set_major_formatter(xfmt)
-            cbar = fig.colorbar(im)
-            cbar.set_label("(dB)")
-            #ax.set_title("%s..%s" % (self.stn, self.chn))
-            #plt.show()
-            plt.savefig("%s_%s.eps" % (self.stn, self.chn), format="eps", bbox_inches='tight')
+            # convert data
+            self.times = times
+            self.freqs = freqs
+            self.specs = specs
+            self._convert4saving()
+
+
+    def save_spectrogram(self, win_len):
+        """
+        Saves the spectrograms, times and frequencies and somes statistics as dictionary.
+
+        The data associated with key "blocks" contains the indices of continous data segments,
+        i.e. len(out["blocks"]) equals the number of continuous data segments. Each array in the list
+        contains the indices to access the spectrograms and times (self.specs and self.times) associated
+        with a continuous data segment. Often, a daily seismogram is one continuous data segment.
+
+        :param win_len: Length of the individual windows (nfft / sampling rate).
+        :return: None. Data is stored as npz file.
+        """
+
+        print("save spectrograms ...")
+
+        out = {"station": self.stn,
+               "channel": self.chn,
+               "win_len": win_len,
+               "times": self.times,
+               "freqs": self.freqs,
+               "specs": self.specs,
+               "blocks": self.blocks}
+
+        np.savez_compressed("./Data/Specs/specs_%s_%s.npz" % (self.stn, self.chn), out)
+
+
+    def plot_spectrogram(self, log=True, t1=None, t2=None, fmin=None, fmax=None, out=None):
+        """
+        Plots spectrogram timeseries.
+
+        :param log: If True, the y-axis is diplayed in logarithmic scale.
+        :param t1: Starttime of display.
+        :param t2: Endtime of display.
+        :param fmin: Minimum frequency of display.
+        :param fmax: Maximum frequency of display.
+        :param out: Filename used to save the plot. If None, figure is not saved but will be
+            displayed immediately.
+        :return: None. Plot is displayed or stored.
+        """
+
+        # load data (in case spectrograms are not calculated beforehand)
+        if self.specs is None:
+            print("loading data ...")
+            self._load_data()
+
+        print("plotting spectrograms ...")
+        # convert data for plotting
+        times, specs = self._convert4plotting()
+        freqs = self.freqs
+
+        # select data
+        if t2 is not None:
+            inds = self._get_indices(t2)
+            if inds[1] > 0:
+                times = times[:inds[0]+1]
+                times[-1] = times[-1][:inds[1]]
+                specs = specs[:inds[0]+1]
+                specs[-1] = specs[-1][:,:inds[1]+1]
+            else:
+                times = times[:inds[0]]
+                specs = specs[:inds[0]]
+
+        if t1 is not None:
+            inds = self._get_indices(t1)
+            times = times[inds[0]:]
+            times[0] = times[0][inds[1]:]
+            specs = specs[inds[0]:]
+            specs[0] = specs[0][:,inds[1]:]
+
+        # if log, convert spectrograms to dB scale
+        if log:
+            for i in range(len(specs)):
+                specs[i] = 10 * np.log10(specs[i])
+
+        # for plotting proper timestring
+        dateconv = np.vectorize(dtime.datetime.utcfromtimestamp)
+        for i in range(len(times)):
+            times[i] = dateconv(times[i])
+        xfmt = mdates.DateFormatter("%j")
+        # create figure
+        fig = plt.figure(figsize=(20,5))
+        ax = fig.add_subplot(111)
+        for i in range(len(specs)):
+            time_ = np.append(times[i], times[i][-1] + (times[i][1] - times[i][0]))
+            im = ax.pcolormesh(time_, freqs, specs[i], cmap="YlOrRd", vmin=-190, vmax=-150, rasterized=True)
+        ax.set_ylim(fmin, fmax)
+        ax.set_xlim(times[0][0], times[-1][-1])
+        ax.set_ylabel("Frequency (Hz)")
+        ax.set_xlabel("Day of year 2016")
+        ax.set_yscale("log")
+        ax.xaxis.set_major_formatter(xfmt)
+        cbar = fig.colorbar(im, fraction=0.04, pad=0.02)
+        cbar.set_label("Velocity PSD (dB)")
+        ax.set_title("%s..%s" % (self.stn, self.chn))
+        if out is not None:
+            plt.savefig(out, format="pdf", bbox_inches="tight")
         else:
-            return times, freqs, specs
+            plt.show()
+
+
+    def ppsd(self, fmin=1., fmax=100., special_handling=None, filename=None, save=False):
+        """
+        Function that calculates the probabilistic power spectral density
+        of a given station-channel combination.
+
+        :type fmin: float
+        :param fmin: Minimum frequency to show in PPSD plot
+        :type fmax: float
+        :param fmax: Maximum frequency to show in PPSD plot
+        """
+
+        # read list of files
+        files = np.genfromtxt(self.filist, dtype=str)
+        n = files.size
+        # if no paz information is given, divide by 1.0
+        if self.metadata == None:
+            self.metadata = {"sensitivity": 1.0}
+        # loop over files
+        for i in range(n):
+            st = read(self.path + files[i])
+            st.merge()
+            st.decimate(self.dec_fact)
+            if len(st) > 1:
+                warnings.warn("more than one trace in st")
+            tr = st.select(station=self.stn, channel=self.chn)[0]
+            # at first run, initialize PPSD instance
+            if i == 0:
+                # "is_rotational_data" is set in order not to differentiate that data
+                inst = PPSD(tr.stats, metadata=self.metadata, special_handling=special_handling, ppsd_length=1800.)
+            # add trace
+            print("add trace %s ..." % tr)
+            inst.add(tr)
+        print("number of psd segments:", len(inst.current_times_used))
+        inst.plot(show_noise_models=True, xaxis_frequency=True, period_lim=(fmin, fmax), filename=filename)
+        if save:
+            inst.save_npz("ppsd_%s_%s.npz" % (self.stn, self.chn))
+
 
 
 class tremor():
