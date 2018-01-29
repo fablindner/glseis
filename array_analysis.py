@@ -1,8 +1,8 @@
 from scipy import signal
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.io
 import warnings
+from obspy import UTCDateTime
 
 
 def nearest_powof2(number):
@@ -139,6 +139,103 @@ def transfer_function(u, freq, easting, northing, elevation):
     ax.text(np.radians(32), u.max() + 0.01, 's/km', color='k')
     ax.set_title('Array Response Function, f=%.1f Hz' % freq)
     plt.tight_layout()
+    plt.show()
+
+
+def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=False):
+    """
+    Function to calculate the array response function as in Wathelet et al., 2008 (J.Seismol.).
+    Also calculates the resolution limits in terms of wavelengths as discussed in the paper.
+
+    :param easting: Easting coordinates of stations.
+    :param northing: Northing coordinates of stations.
+    :param kmax: Maximum wavenumber considered.
+    :param kstep: Step in wavenumber.
+    :param show_greater_thresh:
+    """
+    # runtime
+    t1 = UTCDateTime()
+    # initialize kx and ky
+    kxmax = kmax
+    kymax = kmax
+    kx = np.arange(-kxmax, kxmax + kstep, kstep)
+    ky = np.arange(-kymax, kymax + kstep, kstep)
+    # threshold for kmin and kmax
+    thresh = 0.49
+    # initialize and calculate the array response
+    # -> compare with Wathelet (2008), equation 3
+    Rth = np.zeros((kx.size, ky.size))
+    for i in range(kx.size):
+        for j in range(ky.size):
+            sum_rth = 0.
+            for k in range(easting.size):
+                sum_rth += np.exp(-1j * (kx[i] * easting[k] + ky[j] * northing[k]))
+            Rth[i, j] = abs(sum_rth) ** 2 / float(easting.size) ** 2
+
+    # get response values greater than the threshold and calclate corresponding k values
+    gr_thresh = np.where(Rth > thresh)
+    k_gr_thresh = np.zeros(gr_thresh[0].size)
+    for l in range(gr_thresh[0].size):
+        k_gr_thresh[l] = np.sqrt(kx[gr_thresh[1][l]] ** 2 + ky[gr_thresh[0][l]] ** 2)
+    # distribution of k values greater than the threshold
+    hist, bins = np.histogram(k_gr_thresh, bins=int(kx.size / 2))
+    # obtain the two threshold values (see Wathelet, 2008)
+    k_thresh = []
+    first_peak = True  # corresponds to zero slowness
+    for b in range(hist.size - 1):
+        if hist[b] > 0 and hist[b + 1] == 0:
+            k_thresh.append((bins[b] + bins[b + 1]) / 2.)
+            first_peak = False
+        if hist[b] == 0 and hist[b + 1] > 0 and not first_peak:
+            k_thresh.append((bins[b] + bins[b + 1]) / 2.)
+    min_wvnmbr = k_thresh[0]
+    max_wvnmbr = k_thresh[1]
+    # calculate corresponding wavelengths
+    lambdamin = 2. * np.pi / max_wvnmbr
+    lambdamax = 2. * np.pi / min_wvnmbr
+
+    # distance between stations
+    d = np.zeros((easting.size, easting.size))
+    for i in range(easting.size):
+        for j in range(easting.size):
+            d[i,j] = np.sqrt((easting[i] - easting[j])**2 + (northing[i] - northing[j])**2)
+    # resoluion limints according to Tokimatsu (1997) -> see Wathelet et al. (2008)
+    dmin = 2 * d[d>0].min()
+    dmax = 3 * d[d>0].max()
+
+    # plot
+    fig = plt.figure(figsize=(16, 8))
+    # array geometry
+    ax1 = fig.add_subplot(121)
+    ax1.plot(easting, northing, "kv", markersize=12)
+    ax1.text(easting.min(), northing.min() - 30, "Tokimatsu (1997): %.1f m < $\lambda$ < %.1f m" % (dmin, dmax),
+             fontsize=14)
+    ax1.set_xlabel("Easting (m)")
+    ax1.set_ylabel("Northing (m)")
+    ax1.set_title("Array Geometry")
+    ax1.set_xlim(easting.min()-50., easting.max()+50.)
+    ax1.set_ylim(northing.min()-50., northing.max()+50.)
+    # array response
+    ax2 = fig.add_subplot(122)
+    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.2, vmax=1., cmap="viridis")
+    if show_greater_thresh:
+        ax2.plot(ky[gr_thresh[1]], kx[gr_thresh[0]], "r.", alpha=0.6, label="> %.2f" % thresh)
+    cbar = plt.colorbar(im)
+    cbar.set_label("Beam Power")
+    ax2.set_xlabel("kx (rad/m)")
+    ax2.set_ylabel("ky (rad/m)")
+    an = np.linspace(0, 2 * np.pi, 100)
+    ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--", label="min lambda: %i m" % lambdamin)
+    ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w", label="max lambda: %i m" % lambdamax)
+    legend = plt.legend()
+    frame = legend.get_frame()
+    frame.set_facecolor('0.70')
+    ax2.set_xlim(-max_wvnmbr * 1.25, max_wvnmbr * 1.25)
+    ax2.set_ylim(-max_wvnmbr * 1.25, max_wvnmbr * 1.25)
+    ax2.set_title("Array Response")
+    # runtime
+    t2 = UTCDateTime()
+    print("runtime: %.1f s" % (t2 - t1))
     plt.show()
 
 
