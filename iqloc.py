@@ -280,30 +280,30 @@ class icequake_locations():
         north = np.arange(np.round(n_min, -2), np.round(n_max, -2), dx)
         v = 1670.
 
-        # calcualte traveltimes for all grid points and stations
-        dists = np.zeros((north.size, east.size, len(arrays)))
-        for n in range(north.size):
-            for e in range(east.size):
-                for k, arr in enumerate(arrays):
-                    ind_arr = np.where(arr == array_ids)[0]
-                    dists[n, e, k] = np.sqrt((north[n] - n_coords[ind_arr]) ** 2
-                                             + (east[e] - e_coords[ind_arr]) ** 2)
-        tt = dists / v
-        # calculate travel time differences
-        dtt = np.zeros((tt.shape[0], tt.shape[1], len(arrays), len(arrays)))
-        for k in range(len(arrays)):
-            for l in range(len(arrays)):
-                dtt[:, :, k, l] = tt[:, :, k] - tt[:, :, l]
+        ## calcualte traveltimes for all grid points and stations
+        #dists = np.zeros((north.size, east.size, len(arrays)))
+        #for n in range(north.size):
+        #    for e in range(east.size):
+        #        for k, arr in enumerate(arrays):
+        #            ind_arr = np.where(arr == array_ids)[0]
+        #            dists[n, e, k] = np.sqrt((north[n] - n_coords[ind_arr]) ** 2
+        #                                     + (east[e] - e_coords[ind_arr]) ** 2)
+        #tt = dists / v
+        ## calculate travel time differences
+        #dtt = np.zeros((tt.shape[0], tt.shape[1], len(arrays), len(arrays)))
+        #for k in range(len(arrays)):
+        #    for l in range(len(arrays)):
+        #        dtt[:, :, k, l] = tt[:, :, k] - tt[:, :, l]
 
-        # calculate residuals (L1-norm!) for all travel time difference combinations and them up
-        res = np.zeros((tt.shape[0], tt.shape[1]))
-        count = 0.
-        for k in range(len(arrays)):
-            for l in range(len(arrays)):
-                if k > l:
-                    res[:, :] += abs(dtt[:, :, k, l] - dlags[k, l])
-                    count += 1.
-        res /= count
+        ## calculate residuals (L1-norm!) for all travel time difference combinations and them up
+        #res = np.zeros((tt.shape[0], tt.shape[1]))
+        #count = 0.
+        #for k in range(len(arrays)):
+        #    for l in range(len(arrays)):
+        #        if k > l:
+        #            res[:, :] += abs(dtt[:, :, k, l] - dlags[k, l])
+        #            count += 1.
+        #res /= count
 
         # data for seismogram plotting
         data = np.zeros((st[0].data.size, 4))
@@ -326,7 +326,7 @@ class icequake_locations():
 
         # radius for plotting beams as wedges and estimated beam error (+-)
         r = e_max - e_min
-        err = 3.
+        err = 1.
 
         # plot map, beamforming results and travel time results
         # cols = ["m", "g", "r", "c"]
@@ -352,13 +352,13 @@ class icequake_locations():
                                             -(event["bazs"][arr] - 90 + err), -(event["bazs"][arr] - 90 - err),
                                             color=cols[ind_arr], alpha=0.5))
         ax1.errorbar(epic_east_, epic_north_, epic_north_std_, epic_east_std_, color="k")
-        tmin = res.min()
-        tmax = res.max() * 0.5
-        if tmax < tmin:
-            tmax = res.max()
-        bp = ax1.pcolormesh(east + dx / 2., north + dx / 2., res, alpha=0.3, cmap="CMRmap", vmin=tmin, vmax=tmax)
-        cb = fig.colorbar(bp, shrink=0.78, pad=0.02)
-        cb.set_label("Residual (s)")
+        #tmin = res.min()
+        #tmax = res.max() * 0.5
+        #if tmax < tmin:
+        #    tmax = res.max()
+        #bp = ax1.pcolormesh(east + dx / 2., north + dx / 2., res, alpha=0.3, cmap="CMRmap", vmin=tmin, vmax=tmax)
+        #cb = fig.colorbar(bp, shrink=0.78, pad=0.02)
+        #cb.set_label("Residual (s)")
         ax1.set_xlim(0, (e_max - e_min) / 2. - 20)
         ax1.set_ylim(0, (n_max - n_min) / 2. - 20)
         plt.axis("off")
