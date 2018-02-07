@@ -318,11 +318,11 @@ class spectral_analysis():
             specs.append(spectrogram)
             times.append(time)
 
-            # convert data
-            self.times = times
-            self.freqs = freqs
-            self.specs = specs
-            self._convert4saving()
+        # convert data
+        self.times = times
+        self.freqs = freqs
+        self.specs = specs
+        self._convert4saving()
 
 
     def save_spectrogram(self, win_len):
@@ -351,7 +351,8 @@ class spectral_analysis():
         np.savez_compressed("./Data/Specs/specs_%s_%s.npz" % (self.stn, self.chn), out)
 
 
-    def plot_spectrogram(self, log=True, t1=None, t2=None, fmin=None, fmax=None, out=None):
+    def plot_spectrogram(self, log=True, t1=None, t2=None, fmin=None, fmax=None,
+                         vmin=-190, vmax=-150, remove_median=False, out=None):
         """
         Plots spectrogram timeseries.
 
@@ -360,6 +361,9 @@ class spectral_analysis():
         :param t2: Endtime of display.
         :param fmin: Minimum frequency of display.
         :param fmax: Maximum frequency of display.
+        :param vmin: Min. power displayed (in dB).
+        :param vmax: Max. power displayed (in dB).
+        :param remove_median: if True, median from all spectrograms is subtracted.
         :param out: Filename used to save the plot. If None, figure is not saved but will be
             displayed immediately.
         :return: None. Plot is displayed or stored.
@@ -371,6 +375,15 @@ class spectral_analysis():
             self._load_data()
 
         print("plotting spectrograms ...")
+        # remove median
+        if remove_median:
+            spex = np.array(self.specs)
+            spex -= np.median(spex, axis=0)
+            self.specs = list(spex)
+            med = [abs(np.median(spex[spex<0])), np.median(spex[spex>0])]
+            vmin = -max(med)
+            vmax = max(med)
+
         # convert data for plotting
         times, specs = self._convert4plotting()
         freqs = self.freqs
@@ -409,7 +422,7 @@ class spectral_analysis():
         ax = fig.add_subplot(111)
         for i in range(len(specs)):
             time_ = np.append(times[i], times[i][-1] + (times[i][1] - times[i][0]))
-            im = ax.pcolormesh(time_, freqs, specs[i], cmap="YlOrRd", vmin=-190, vmax=-150, rasterized=True)
+            im = ax.pcolormesh(time_, freqs, specs[i], cmap="RdYlBu", vmin=vmin, vmax=vmax, rasterized=True)
         ax.set_ylim(fmin, fmax)
         ax.set_xlim(times[0][0], times[-1][-1])
         ax.set_ylabel("Frequency (Hz)")
