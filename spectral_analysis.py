@@ -325,9 +325,9 @@ class spectral_analysis():
         self._convert4saving()
 
 
-    def save_spectrogram(self, win_len):
+    def save_spectrogram(self, win_len, path="./Data/Specs/"):
         """
-        Saves the spectrograms, times and frequencies and somes statistics as dictionary.
+        Saves the spectrograms, times and frequencies and some statistics as dictionary.
 
         The data associated with key "blocks" contains the indices of continous data segments,
         i.e. len(out["blocks"]) equals the number of continuous data segments. Each array in the list
@@ -335,6 +335,7 @@ class spectral_analysis():
         with a continuous data segment. Often, a daily seismogram is one continuous data segment.
 
         :param win_len: Length of the individual windows (nfft / sampling rate).
+        :param path: path for saving the spectrograms.
         :return: None. Data is stored as npz file.
         """
 
@@ -348,7 +349,7 @@ class spectral_analysis():
                "specs": self.specs,
                "blocks": self.blocks}
 
-        np.savez_compressed("./Data/Specs/specs_%s_%s.npz" % (self.stn, self.chn), out)
+        np.savez_compressed(path + "specs_%s_%s.npz" % (self.stn, self.chn), out)
 
 
     def plot_spectrogram(self, log=True, t1=None, t2=None, fmin=None, fmax=None,
@@ -417,12 +418,15 @@ class spectral_analysis():
         for i in range(len(times)):
             times[i] = dateconv(times[i])
         xfmt = mdates.DateFormatter("%j")
+        # approximate plotting range in case vmin and vmax are None
+        vmin = np.median([spec.min() for spec in specs]) + 20
+        vmax = np.median([spec.max() for spec in specs]) - 20
         # create figure
         fig = plt.figure(figsize=(20,5))
         ax = fig.add_subplot(111)
         for i in range(len(specs)):
             time_ = np.append(times[i], times[i][-1] + (times[i][1] - times[i][0]))
-            im = ax.pcolormesh(time_, freqs, specs[i], cmap="RdYlBu", vmin=vmin, vmax=vmax, rasterized=True)
+            im = ax.pcolormesh(time_, freqs, specs[i], cmap="YlOrRd", vmin=vmin, vmax=vmax, rasterized=True)
         ax.set_ylim(fmin, fmax)
         ax.set_xlim(times[0][0], times[-1][-1])
         ax.set_ylabel("Frequency (Hz)")
