@@ -419,8 +419,9 @@ class spectral_analysis():
             times[i] = dateconv(times[i])
         xfmt = mdates.DateFormatter("%j")
         # approximate plotting range in case vmin and vmax are None
-        vmin = np.median([spec.min() for spec in specs]) + 20
-        vmax = np.median([spec.max() for spec in specs]) - 20
+        if vmin == None and max == None:
+            vmin = np.median([spec.min() for spec in specs]) + 20
+            vmax = np.median([spec.max() for spec in specs]) - 20
         # create figure
         fig = plt.figure(figsize=(20,5))
         ax = fig.add_subplot(111)
