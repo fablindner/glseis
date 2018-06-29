@@ -6,6 +6,8 @@ __author__ = "Fabian Lindner"
 
 
 import numpy as np
+import sys
+import datetime
 from scipy.special import struve
 
 
@@ -73,3 +75,11 @@ def interstation_dist(stn1, stn2, path2file, hor=True):
         dist = np.sqrt((easts[ind1] - easts[ind2])**2 + (norths[ind1] - norths[ind2])**2 
                      + (elevs[ind1] - elevs[ind2])**2)
     return dist
+
+
+def ascii_header():
+    fn = sys.argv[0]
+    date = datetime.datetime.now() 
+    header = "# %s\n# %s \n" % (fn, date)
+    return header
+
