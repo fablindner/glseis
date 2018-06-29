@@ -137,12 +137,13 @@ def pick_disp_curve(freq, disp, vmin, vmax, freq_theo=None, disp_theo=None):
 
 
 
-def fit_smith_dahlen(baz, vel, four_theta=True):
+def fit_smith_dahlen(baz, vel, errors=None, four_theta=True):
     """
     Fits the Smith & Dahlen (1973) anisotropy model through the
     given data points using linear least squares.
     :param baz: backazimuth values
     :param vel: corresponding phase velocity values
+    :param errors: data errors. If provided, weighted least squares is performed.
     :param four_theta: if True, five parameter fit (including 4 theta
         component). Otherwise only three parameter fit.
     :return: the model parameters describing anisotropy 
@@ -164,7 +165,12 @@ def fit_smith_dahlen(baz, vel, four_theta=True):
     d[:,0] = vel
 
     # inversion
-    GTG_inv = np.linalg.inv(np.dot(G.T, G))
-    GTd = np.dot(G.T, d)
+    if errors is None:
+        GTG_inv = np.linalg.inv(np.dot(G.T, G))
+        GTd = np.dot(G.T, d)
+    else:
+        W = np.diag(1. / errors**2)
+        GTG_inv = np.linalg.inv(np.dot(np.dot(G.T, W), G))
+        GTd = np.dot(np.dot(G.T, W), d)
     m = np.dot(GTG_inv, GTd)
     return np.squeeze(m)
