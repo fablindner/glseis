@@ -1,4 +1,5 @@
 from scipy import signal
+import scipy
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
@@ -268,6 +269,97 @@ def annul_dominant_interferers(CSDM, neig, data):
     # calculate projected cross spectral density matrix
     csdm = np.dot(data, data.conj().T)
     return csdm
+
+
+def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
+                 fc_min=1, fc_max=10, taper_fract=0.1, norm=True):
+    """
+    This routine estimates the back azimuth and phase velocity of incoming waves
+    based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
+
+    :type matr: numpy.ndarray
+    :param matr: time series of used stations (dim: [number of samples, number of stations])
+    :type prepr: integer
+    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
+    :type fmin, fmax: float
+    :param fmin, fmax: frequency range for which the beamforming result is calculated
+    :type Fs: float
+    :param Fs: sampling rate of data streams
+    :type w_length: float
+    :param w_length: length of sliding window in seconds. result is "averaged" over windows
+    :type w_delay: float
+    :param w_delay: delay of sliding window in seconds with respect to previous window
+    :type df: float
+    :param df: frequency step between fmin and fmax
+    :type fc_min, fc_max: float
+    :param fc_min, fc_max: corner frequencies used for preprocessing
+    :type taper_fract: float
+    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
+    :type norm: boolean
+    :param norm: if True (default), beam power is normalized
+
+    :return: array holding the eigenvalues of the CSDM matrix
+
+    Note: the body of this function is taken from the function "plwave_beamformer"
+        as of Jun 15 2018.
+    """
+
+    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    # number of stations
+    n_stats = data.shape[1]
+    # extract number of data points
+    Nombre = data[:, 1].size
+    # construct time window
+    time = np.arange(0, Nombre) / Fs
+    # construct analysis frequencies
+    indice_freq = np.arange(fmin, fmax+df, df)
+    # construct analysis window for entire hour and delay
+    interval = np.arange(0, np.ceil(w_length * Fs) + 1, dtype=int)
+    delay = int(w_delay * Fs)
+    # number of analysis windows ('shots')
+    if delay > 0:
+        numero_shots = (Nombre - len(interval)) // delay + 1
+    elif delay == 0:
+        numero_shots = 1
+    
+    # initialize data steering vector:
+    # dim: [number of frequencies, number of stations, number of analysis windows]
+    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
+    
+    # construct matrix for DFT calculation
+    # dim: [number time points, number frequencies]
+    matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+
+    # loop over stations
+    for ii in range(n_stats):
+        toto = data[:, ii]
+        # now loop over shots
+        for jj in range(numero_shots):
+        #while (numero * delay + len(interval)) <= len(toto):
+            # calculate DFT
+            # dim: [number frequencies]
+            adjust = np.dot(toto[jj * delay + interval][:, None], np.ones((1, len(indice_freq))))
+            test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
+            # fill data steering vector: ii'th station, numero'th shot.
+            # normalize in order not to bias strongest seismogram.
+            # dim: [number frequencies, number stations, number shots]
+            vect_data_adaptive[:, ii, jj] = (test / abs(test)).conj().T
+            #numero += 1
+
+    eigvals = np.zeros(n_stats)
+    # loop over frequencies
+    for ll in range(len(indice_freq)):
+        # calculate cross-spectral density matrix
+        # dim: [number of stations X number of stations]
+        K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
+    
+        if np.linalg.matrix_rank(K) < n_stats:
+            warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+
+        vals = abs(scipy.linalg.eigvals(K)).astype(float)
+        eigvals += np.sort(vals)[::-1]
+    
+    return eigvals / len(indice_freq)
 
 
 def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax, Fs, w_length, w_delay, baz=None,
