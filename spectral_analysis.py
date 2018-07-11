@@ -80,6 +80,8 @@ class spectral_analysis():
         self.chn = chn
         self.metadata = metadata
         self.dec_fact = dec_fact
+        self.cmap = "YlOrRd"
+        self.unit = None
         self.times = None
         self.freqs = None
         self.specs = None
@@ -353,7 +355,7 @@ class spectral_analysis():
 
 
     def plot_spectrogram(self, log=True, t1=None, t2=None, fmin=None, fmax=None,
-                         vmin=-190, vmax=-150, remove_median=False, out=None):
+                         vmin=-190, vmax=-150, diff2median=None, out=None):
         """
         Plots spectrogram timeseries.
 
@@ -364,7 +366,8 @@ class spectral_analysis():
         :param fmax: Maximum frequency of display.
         :param vmin: Min. power displayed (in dB).
         :param vmax: Max. power displayed (in dB).
-        :param remove_median: if True, median from all spectrograms is subtracted.
+        :param diff2median: tupel of times used to calculate median PSD. If given, not the
+            spectrogram but its difference to the median PSD are displayed.
         :param out: Filename used to save the plot. If None, figure is not saved but will be
             displayed immediately.
         :return: None. Plot is displayed or stored.
@@ -377,13 +380,20 @@ class spectral_analysis():
 
         print("plotting spectrograms ...")
         # remove median
-        if remove_median:
-            spex = np.array(self.specs)
-            spex -= np.median(spex, axis=0)
-            self.specs = list(spex)
-            med = [abs(np.median(spex[spex<0])), np.median(spex[spex>0])]
-            vmin = -max(med)
-            vmax = max(med)
+        if diff2median is not None:
+            ts = diff2median[0].timestamp
+            te = diff2median[1].timestamp
+            time = np.array(self.times)
+            ind = np.where((time >= ts) & (time <= te))[0]
+            spex = np.array(self.specs)[ind, :]
+            spex_med = np.median(spex, axis=0)
+            diff = []
+            for spec in self.specs:
+                d = 10. * np.log10(spec) - 10. * np.log10(spex_med)
+                diff.append(d)
+            self.specs = diff
+            self.cmap = "bwr"
+            self.unit = "dB"
 
         # convert data for plotting
         times, specs = self._convert4plotting()
@@ -408,8 +418,8 @@ class spectral_analysis():
             specs = specs[inds[0]:]
             specs[0] = specs[0][:,inds[1]:]
 
-        # if log, convert spectrograms to dB scale
-        if log:
+        # convert to decibel
+        if self.unit is not "dB":
             for i in range(len(specs)):
                 specs[i] = 10 * np.log10(specs[i])
 
@@ -423,16 +433,18 @@ class spectral_analysis():
             vmin = np.median([spec.min() for spec in specs]) + 20
             vmax = np.median([spec.max() for spec in specs]) - 20
         # create figure
-        fig = plt.figure(figsize=(20,5))
+        fig = plt.figure(figsize=(20,6.0))
         ax = fig.add_subplot(111)
         for i in range(len(specs)):
             time_ = np.append(times[i], times[i][-1] + (times[i][1] - times[i][0]))
-            im = ax.pcolormesh(time_, freqs, specs[i], cmap="YlOrRd", vmin=vmin, vmax=vmax, rasterized=True)
+            im = ax.pcolormesh(time_, freqs, specs[i], cmap=self.cmap,
+                               vmin=vmin, vmax=vmax, rasterized=True)
         ax.set_ylim(fmin, fmax)
         ax.set_xlim(times[0][0], times[-1][-1])
         ax.set_ylabel("Frequency (Hz)")
         ax.set_xlabel("Day of year 2016")
-        ax.set_yscale("log")
+        if log:
+            ax.set_yscale("log")
         ax.xaxis.set_major_formatter(xfmt)
         cbar = fig.colorbar(im, fraction=0.04, pad=0.02)
         cbar.set_label("Velocity PSD (dB)")
@@ -464,7 +476,7 @@ class spectral_analysis():
         for i in range(n):
             st = read(self.path + files[i])
             st.merge()
-            st.decimate(self.dec_fact)
+            #st.decimate(self.dec_fact)
             if len(st) > 1:
                 warnings.warn("more than one trace in st")
             tr = st.select(station=self.stn, channel=self.chn)[0]
