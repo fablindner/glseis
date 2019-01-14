@@ -362,8 +362,9 @@ def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
     return eigvals / len(indice_freq)
 
 
-def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax, Fs, w_length, w_delay, baz=None,
-                      processor="bartlett", df=0.2, fc_min=1, fc_max=10, taper_fract=0.1, neig=0, norm=True):
+def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
+        Fs, w_length, w_delay, baz=None, processor="bartlett", df=0.2, fc_min=1,
+        fc_max=10, taper_fract=0.1, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -514,29 +515,33 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax, 
     return teta, s*1000., beamformer.T
 
 
-def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, smin, smax, ds, prepr, fmin, fmax, fc_min, fc_max,
-                            Fs, w_length, w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0, norm=True):
+def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, 
+        svrng, ds, slow, prepr, fmin, fmax, fc_min, fc_max, Fs, w_length,
+        w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0,
+        norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
-    Can also be used to focus the beam to a certain coordinate, which must be specified with
-    xmax, ymax, zmax. In this case, dx, dy, and dz need to be set to zero!
-
+    Can also be used to focus the beam to a certain coordinate, which must be
+    specified with xmax, ymax, zmax. In this case, dx, dy, and dz need to be set
+    to zero!
+    
     :type matr: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
-    :type xmax, ymax, zmax: float
-    :param xmax, ymax, zmax: spatial grid search: grid ranges from x - xmax to x + xmax,
-        y - ymax to y + ymax and 0 to zmax, where (x,y) are the array center. zmax is the
-        maximum depth used for the grid search.
+    :type xrng, yrng, zrng: tuple
+    :param xrng, yrng, zrng: parameters for spatial grid search. Grid ranges
+        from xrng[0] to xrng[1], yrng[0] to yrng[1], and zrng[0] to zrng[1].
     :type dx, dy, dz: float
-    :param dx, dy, dz: grid resolution; increment from x - xmax to x + xmax, y - ymax to y + ymax,
-        and 0 to zmax, respectively. (x,y) are the coordinates of the array center
-    :type smin, smax: float
-    :param smin, smax: slowness interval used to calculate replica vector
+    :param dx, dy, dz: grid resolution; increment from xrng[0] to xrng[1],
+        yrng[0] to yrng[1], zrng[0] to zrng[1]
+    :type svrng: tuple
+    :param svrng: slowness interval used to calculate replica vector
     :type ds: float
     :param ds: slowness step used to calculate replica vector
+    :type slow: boolean 
+    :param slow: if true, svmin, svmax, dsv are slowness values. if false, velocity values
     :type prepr: integer
     :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
@@ -569,80 +574,124 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, smin, sm
         beamformer (dim: [number y-grid points, number x-grid points, number cs])
     """
 
+    # preprocess data
     data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
     # number of stations
     n_stats = data.shape[1]
 
-    # grid for search over location and apparent velocity
-    # if beam is focussed to a fixed position
-    if dx == 0. and dy == 0.:
-        xcoord = np.array([xmax])
-        ycoord = np.array([ymax])
-        zcoord = np.array([zmax])
+    # grid for search over location
+    # if beam is fixed to a coordinate in x, y, or z
+    if yrng[0] == yrng[1]:
+        ycoord = np.array([yrng[0]])
     # if beam is calculated for a regular grid
     else:
-        xcoord = np.arange(-xmax, xmax + dx, dx) + np.mean(scoord[:, 0])
-        ycoord = np.arange(-ymax, ymax + dy, dy) + np.mean(scoord[:, 1])
-        if zmax > 0:
-            zcoord = np.arange(0, zmax + dz, dz)
-        else:
-            zcoord = [0.]
-    s = np.arange(smin, smax + ds, ds) / 1000.
+        ycoord = np.arange(yrng[0], yrng[1] + dy, dy)
+    # same for x ... 
+    if xrng[0] == xrng[1]:
+        xcoord = np.array([xrng[0]])
+    else:
+        xcoord = np.arange(xrng[0], xrng[1] + dx, dx)
+    # and for z 
+    if zrng[0] == zrng[1]:
+        zcoord = np.array([zrng[0]])
+    else:
+        zcoord = np.arange(zrng[0], zrng[1] + dz, dz)
+    # create meshgrids
+    ygrid, xgrid = np.meshgrid(ycoord, xcoord)
+    zgrid = np.zeros(xgrid.shape)
+    ygrid = ygrid.reshape(ygrid.size)
+    xgrid = xgrid.reshape(xgrid.size)
+    zgrid = zgrid.reshape(zgrid.size)
+    if zcoord.size > 1:
+        ygrid = np.tile(ygrid, zcoord.size)
+        xgrid = np.tile(xgrid, zcoord.size)
+        zgrid_ = np.copy(zgrid)
+        for i in range(zcoord.size - 1):
+            zgrid = np.concatenate((zgrid, zgrid_ + zcoord[i+1]))
+
+    # grid for search over slowness
+    if svrng[0] == svrng[1]:
+        s = np.array([svrng[0]]) / 1000.
+    else:
+        s = np.arange(svrng[0], svrng[1] + ds, ds) / 1000.
+    if not slow:
+        s = 1. / s * 1e6
+    # extend coordinate grids and slowness grid
+    sgrid = np.zeros(xgrid.size) + s[0]
+    ssize = sgrid.size
+    if s.size > 1:
+        ygrid = np.tile(ygrid, s.size)
+        xgrid = np.tile(xgrid, s.size)
+        zgrid = np.tile(zgrid, s.size)
+        for i in range(s.size - 1):
+            sgrid = np.concatenate((sgrid, np.zeros(ssize) + s[i+1]))
+    # reshape for efficient calculation
+    xscoord = np.tile(scoord[:,0].reshape(n_stats, 1), (1, xgrid.size))
+    yscoord = np.tile(scoord[:,1].reshape(n_stats, 1), (1, ygrid.size))
+    ygrid = np.tile(ygrid, (n_stats, 1))
+    xgrid = np.tile(xgrid, (n_stats, 1))
+    zgrid = np.tile(zgrid, (n_stats, 1))
+    sgrid = np.tile(sgrid, (n_stats, 1))
+    # number of parameter combinations
+    n_param = xgrid.shape[1]
+
     # extract number of data points
-    Nombre = data[:, 1].size
-    # construct time window
-    time = np.arange(0, Nombre) / Fs
+    npts = data[:, 1].size
     # construct analysis frequencies
-    indice_freq = np.arange(fmin, fmax+df, df)
-    # construct analysis window for entire hour and delay
-    interval = np.arange(0, int(w_length * Fs))
-    delay = int(w_delay * Fs)
+    freq = np.arange(fmin, fmax + df, df)
+    # construct time vector for sliding window 
+    w_time = np.arange(0, w_length, 1./Fs)
+    npts_win = w_time.size
+    npts_delay = int(w_delay * Fs)
     # number of analysis windows ('shots')
-    numero_shots = np.floor((Nombre - len(interval)) / delay) + 1
+    nshots = int(np.floor((npts - w_time.size) / npts_delay)) + 1
 
     # initialize data steering vector:
     # dim: [number of frequencies, number of stations, number of analysis windows]
-    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
-
-    # initialize beamformer
-    # dim: [number xcoord, number ycoord, number app. vel.]
-    beamformer = np.zeros((ycoord.size, xcoord.size, s.size))
+    vect_data = np.zeros((freq.size, n_stats, nshots), dtype=np.complex)
 
     # construct matrix for DFT calculation
-    # dim: [number time points, number frequencies]
-    matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+    # dim: [number w_time points, number frequencies]
+    matrice_int = np.exp(2. * np.pi * 1j * np.dot(w_time[:, None], freq[:, None].T))
 
-    # loop over stations
+    # initialize array for beamformer 
+    beamformer = np.zeros(n_param)
+
+
+    # calculate DFTs 
     for ii in range(n_stats):
         toto = data[:, ii]
         # now loop over shots
-        numero = 0
-        while (numero * delay + len(interval)) < len(toto):
+        n = 0
+        while (n * npts_delay + npts_win) < npts:
             # calculate DFT
             # dim: [number frequencies]
-            adjust = np.dot(toto[numero * delay + interval][:, None], np.ones((1, len(indice_freq))))
-            test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
-            # fill data steering vector: ii'th station, numero'th shot.
+            adjust = np.dot(toto[n*npts_delay: n*npts_delay+npts_win][:, None],
+                            np.ones((1, freq.size)))
+            # mean averages over time axis
+            data_freq = np.mean(np.multiply(adjust, matrice_int), axis=0)
+            # fill data steering vector: ii'th station, n'th shot.
             # normalize in order not to bias strongest seismogram.
             # dim: [number frequencies, number stations, number shots]
-            vect_data_adaptive[:, ii, numero] = (test / abs(test)).conj().T
-            numero += 1
+            vect_data[:, ii, n] = (data_freq / abs(data_freq)).conj().T
+            n += 1
 
-    # loop over frequencies
-    for ll in range(len(indice_freq)):
+
+    # loop over frequencies and perform beamforming
+    for ll in range(freq.size):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        if numero == 1:
-            K = np.dot(vect_data_adaptive[ll, :, :].conj().T, vect_data_adaptive[ll, :, :])
+        if n == 1:
+            K = np.dot(vect_data[ll, :, :].conj().T, vect_data[ll, :, :])
         else:
-            K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
+            K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
 
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
 
         # annul dominant source 
         if neig > 0:
-            K = annul_dominant_interferers(K, neig, vect_data_adaptive[ll, :, :])
+            K = annul_dominant_interferers(K, neig, vect_data[ll, :, :])
 
         if norm:
             K /= np.linalg.norm(K)
@@ -650,32 +699,48 @@ def matchedfield_beamformer(matr, scoord, xmax, ymax, zmax, dx, dy, dz, smin, sm
         if processor == "adaptive":
             K_inv = np.linalg.inv(K)
 
-        # loop over spatial grid
-        for zz in range(len(zcoord)):
-            for yy in range(len(ycoord)):
-                for xx in range(len(xcoord)):
-                    # loop over apparent velocity
-                    for cc in range(len(s)):
-    
-                        # define and normalize replica vector (neglect amplitude information)
-                        omega = np.exp(-1j * np.sqrt((scoord[:, 0] - xcoord[xx])**2 + (scoord[:, 1] - ycoord[yy])**2 + zcoord[zz]**2) \
-                                       * 2. * np.pi * indice_freq[ll] * s[cc])
-                        omega /= np.linalg.norm(omega)
-    
-                        # calculate processors and save results
-                        replica = omega[:, None]
-                        # bartlett
-                        if processor == "bartlett":
-                            beamformer[yy, xx, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
-                        # adaptive - Note that replica.conj().T * replica = 1. + 0j
-                        elif processor == "adaptive":
-                            beamformer[yy, xx, cc] += abs(np.dot(replica.conj().T, replica) \
-                                                       / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
-                        else:
-                            raise ValueError("No processor called '%s'" % processor)
+        # calculate replica vector
+        replica = np.exp(-1j * np.sqrt((xscoord - xgrid)**2 \
+            + (yscoord - ygrid)**2 + zgrid**2) * 2. * np.pi * freq[ll] * sgrid)
+        replica /= np.linalg.norm(replica, axis=0)
+        replica = np.reshape(replica, (n_stats, n_param))
 
-    beamformer /= indice_freq.size
-    if dx == 0 and dy == 0:
-        return s*1000., beamformer
-    else:
-        return xcoord, ycoord, zcoord, s*1000., beamformer
+        # reshape K matrix and append copy of it n_param times along third dimension  
+        K = np.reshape(K, (n_stats, n_stats, 1))
+        K = np.tile(K, (1, 1, n_param))
+
+        
+        # perform MFP
+        # bartlett processor
+        if processor == "bartlett":
+            # initialize array for dot product
+            dot1 = np.zeros((n_stats, n_param), dtype=complex)
+            # first dot product - replica.conj().T with K
+            for i in range(n_stats):
+                dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
+            # second dot product - dot1 with replica
+            beamformer += abs(np.sum(np.multiply(dot1, replica), axis=0))
+
+
+        # adaptive processor
+        elif processor == "adaptive":
+            # initialize some arrays
+            K_inv = np.reshape(K_inv, (n_stats, n_stats, 1))
+            K_inv = np.tile(K_inv, (1, 1, n_param))
+            dot1 = np.zeros((n_stats, n_param), dtype=complex)
+            # first dot product - replica.conj().T with K_inv 
+            for i in range(n_stats):
+                dot1[i] = np.sum(np.multiply(replica.conj(), K_inv[:,i,:]), axis=0)
+            # second dot product - dot1 with replica
+            dot2 = np.sum(np.multiply(dot1, replica), axis=0)
+            beamformer += abs((1. + 0.j) / dot2)
+
+        else:
+            raise ValueError("No processor called '%s'" % processor)
+
+
+    # normalize beamformer and reshape
+    beamformer /= freq.size
+    beamformer = np.reshape(beamformer, (ycoord.size, xcoord.size,
+        zcoord.size, s.size), order="F")
+    return ycoord, xcoord, zcoord, s*1000., beamformer
