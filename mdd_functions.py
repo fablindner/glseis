@@ -37,6 +37,51 @@ def preprocessing(data, path, muteP, fs, fmin=5, fmax=30):
     return data
 
 
+def calculate_CCF_PSF(Gt, GSt, fs):
+    """
+    Function to calculate the frequency-domain cross-correlation and
+    point-spread functions for MDD applications.
+    :param Gt: Matrix holding the time series of the single center receiver.
+        Shape must be (# sources, # time samples).
+    :param GSt: Matrix holding the time series of the boundary receivers.
+        Shape must be (# sources, # receivers, # time samples).
+    :param fs: sampling frequency.
+    """
+
+    # get number of sources and number of receivers, and number of time samples
+    num_src = GSt.shape[0]
+    num_rec = GSt.shape[1]
+    npts    = GSt.shape[2]
+
+    # perform ffts of seismograms
+    print("Perform ffts of seismograms ...")
+    freqs = np.fft.rfftfreq(npts, 1./fs)
+    # central receiver
+    G = np.zeros((num_src, freqs.size), dtype=complex)
+    for s in range(num_src):
+        G[s, :] = np.fft.rfft(Gt[s, :], norm="ortho")
+    # chain receivers
+    GS = np.zeros((num_src, num_rec, freqs.size), dtype=complex)
+    for s in range(num_src):
+        for r in range(num_rec):
+            GS[s, r, :] = np.fft.rfft(GSt[s, r, :], norm="ortho")
+    
+    # compute cross-correlation function and point-spread function
+    print("Calculate cross-correlation function and point-spread function ...")
+    C = np.zeros((num_rec, freqs.size), dtype=complex)
+    T = np.zeros((num_rec, num_rec, freqs.size), dtype=complex)
+    for f in range(freqs.size):
+        # xcorr function
+        for r in range(num_rec):
+            C[r, f] = np.sum(G[:, f] * np.conj(GS[:, r, f]))
+    
+        # point-spread function
+        for r1 in range(num_rec):
+            for r2 in range(num_rec):
+                T[r1, r2, f] = np.sum(GS[:, r1, f] * np.conj(GS[:, r2, f]))
+
+    return freqs, C, T
+
 
 
 class MDD():
@@ -158,7 +203,7 @@ class MDD():
         print("perform inversion ...")
         # create autocorrelation of ricker wavelet
         if fricker > 0:
-            auto = ricker(self.dt, fricker, 1, self.freqs) \ 
+            auto = ricker(self.dt, fricker, 1, self.freqs) \
                  * np.conj(ricker(self.dt, fricker, 1, self.freqs))
         # loop over scenarios
         for key in self.scenarios:
