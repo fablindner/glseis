@@ -9,6 +9,8 @@ import numpy as np
 import sys
 import datetime
 from scipy.special import struve
+from obspy import UTCDateTime
+
 
 
 
@@ -82,4 +84,64 @@ def ascii_header():
     date = datetime.datetime.now() 
     header = "# %s\n# %s \n" % (fn, date)
     return header
+
+
+def load_beams(fn, t1=None, t2=None, powmin=0, rpow=False):
+    """
+    Function to load beamforming results.
+    :param fn: file name
+    :param t1: starttime
+    :param t2: endtime
+    :param powmin: beam power threshold
+    :param rpow: if True, power values are returned
+    """
+
+    # dictionary containing all data
+    path = "/scratch/flindner/PlaineMorte/Beamforming/"
+
+    try:
+        # load relvant data
+        data = np.load(path + fn)["arr_0"].item()
+        times = data["times"]
+        beams = data["beams"]
+        baz = data["baz"]
+        vel = data["sv"]
+
+        # max beam power, slowness/velocity and baz values
+        pows = [np.max(beam) for beam in beams]
+        inds_max = [np.unravel_index(np.argmax(beam), beam.shape) \
+                for beam in beams]
+        vels = [vel[ind[0]] for ind in inds_max]
+        bazs = [baz[ind[1]] for ind in inds_max]
+
+        # remove nans
+        ind = np.where(np.isnan(pows) == False)[0]
+        pows = np.array(pows)
+        pows = pows[ind]
+        times = np.array(times)[ind]
+        vels = np.array(vels)[ind]
+        bazs = np.array(bazs)[ind]
+
+        # get only results in specified time period
+        if t1 is not None:
+            ind = np.where((times >= t1.timestamp) & (times <= t2.timestamp))
+            pows = pows[ind]
+            times = times[ind]
+            vels = vels[ind]
+            bazs = bazs[ind]
+
+        # get only results with beampower >= powmin
+        ind = np.where(pows >= powmin)[0]
+        pows = pows[ind] 
+        times = times[ind]
+        vels = vels[ind]
+        bazs = bazs[ind]
+
+        if rpow:
+            return times, bazs, vels, pows
+        else:
+            return times, bazs, vels
+
+    except:
+        return None, None, None
 
