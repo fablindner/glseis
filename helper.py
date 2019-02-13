@@ -86,7 +86,7 @@ def ascii_header():
     return header
 
 
-def load_beams(fn, type, t1=None, t2=None, powmin=0, rpow=False):
+def load_beams(fn, type, t1=None, t2=None, powmin=0):
     """
     Function to load beamforming results.
     :param fn: file name
@@ -95,7 +95,6 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0, rpow=False):
     :param t1: starttime
     :param t2: endtime
     :param powmin: beam power threshold
-    :param rpow: if True, power values are returned
     """
 
     # dictionary containing all data
@@ -164,17 +163,10 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0, rpow=False):
             yepi = yepi[ind]
             zhyp = zhyp[ind]
 
-        if rpow:
-            if type == "plw":
-                return times, bazs, vels, pows
-            elif type == "mfp":
-                return times, [xepi, yepi, zhyp], vels, pows
-        else:
-            if type == "plw":
-                return times, bazs, vels
-            elif type == "mfp":
-                return times, [xepi, yepi, zhyp], vels
+       if type == "plw":
+           return times, bazs, vels, pows
+       elif type == "mfp":
+           return times, [xepi, yepi, zhyp], vels, pows
 
     except:
         return None, None, None
-
