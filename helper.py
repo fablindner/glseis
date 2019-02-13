@@ -86,10 +86,12 @@ def ascii_header():
     return header
 
 
-def load_beams(fn, t1=None, t2=None, powmin=0, rpow=False):
+def load_beams(fn, type, t1=None, t2=None, powmin=0, rpow=False):
     """
     Function to load beamforming results.
     :param fn: file name
+    :param type: Type of Beamforming result. 'plw' for plane-wave beamforming
+        or 'mfp' for matched-field processing.
     :param t1: starttime
     :param t2: endtime
     :param powmin: beam power threshold
@@ -103,16 +105,26 @@ def load_beams(fn, t1=None, t2=None, powmin=0, rpow=False):
         # load relvant data
         data = np.load(path + fn)["arr_0"].item()
         times = data["times"]
-        beams = data["beams"]
-        baz = data["baz"]
         vel = data["sv"]
+        beams = data["beams"]
+        if type == "plw":
+            baz = data["baz"]
+        elif type == "mfp":
+            xcoord = data["xcoord"]
+            ycoord = data["ycoord"]
+            zcoord = data["yzoord"]
 
         # max beam power, slowness/velocity and baz values
         pows = [np.max(beam) for beam in beams]
         inds_max = [np.unravel_index(np.argmax(beam), beam.shape) \
                 for beam in beams]
         vels = [vel[ind[0]] for ind in inds_max]
-        bazs = [baz[ind[1]] for ind in inds_max]
+        if type = "plw":
+            bazs = [baz[ind[1]] for ind in inds_max]
+        elif type = "mfp":
+            xepi = [xcoords[ind[1]] for ind in inds_max]
+            yepi = [ycoords[ind[0]] for ind in inds_max]
+            zhyp = [zcoords[ind[2]] for ind in inds_max]
 
         # remove nans
         ind = np.where(np.isnan(pows) == False)[0]
@@ -120,7 +132,12 @@ def load_beams(fn, t1=None, t2=None, powmin=0, rpow=False):
         pows = pows[ind]
         times = np.array(times)[ind]
         vels = np.array(vels)[ind]
-        bazs = np.array(bazs)[ind]
+        if type = "plw":
+            bazs = np.array(bazs)[ind]
+        elif type = "mfp":
+            xepi = np.array(xepi)[ind]
+            yepi = np.array(yepi)[ind]
+            zhyp = np.array(zhyp)[ind]
 
         # get only results in specified time period
         if t1 is not None:
@@ -128,19 +145,35 @@ def load_beams(fn, t1=None, t2=None, powmin=0, rpow=False):
             pows = pows[ind]
             times = times[ind]
             vels = vels[ind]
-            bazs = bazs[ind]
+            if type == "plw":
+                bazs = bazs[ind]
+            elif type == "mfp":
+                xepi = xepi[ind]
+                yepi = yepi[ind]
+                zhyp = zhyp[ind]
 
         # get only results with beampower >= powmin
         ind = np.where(pows >= powmin)[0]
         pows = pows[ind] 
         times = times[ind]
         vels = vels[ind]
-        bazs = bazs[ind]
+        if type == "plw":
+            bazs = bazs[ind]
+        elif type == "mfp":
+            xepi = xepi[ind]
+            yepi = yepi[ind]
+            zhyp = zhyp[ind]
 
         if rpow:
-            return times, bazs, vels, pows
+            if type == "plw":
+                return times, bazs, vels, pows
+            elif type == "mfp":
+                return times, [xepi, yepi, zhyp], vels, pows
         else:
-            return times, bazs, vels
+            if type == "plw":
+                return times, bazs, vels
+            elif type == "mfp":
+                return times, [xepi, yepi, zhyp], vels
 
     except:
         return None, None, None
