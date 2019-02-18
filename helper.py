@@ -118,10 +118,11 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0):
         pows = [np.max(beam) for beam in beams]
         inds_max = [np.unravel_index(np.argmax(beam), beam.shape) \
                 for beam in beams]
-        vels = [vel[ind[0]] for ind in inds_max]
         if type == "plw":
+            vels = [vel[ind[0]] for ind in inds_max]
             bazs = [baz[ind[1]] for ind in inds_max]
         elif type == "mfp":
+            vels = [vel[ind[3]] for ind in inds_max]
             xepi = [xcoord[ind[1]] for ind in inds_max]
             yepi = [ycoord[ind[0]] for ind in inds_max]
             zhyp = [zcoord[ind[2]] for ind in inds_max]
