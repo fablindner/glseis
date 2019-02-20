@@ -24,63 +24,6 @@ def nearest_powof2(number):
     return res
 
 
-def preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract):
-    """
-    :type matr: numpy.ndarray
-    :param matr: time series of used stations (dim: [number of samples, number of stations])
-    :type prepr: integer
-    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
-    :type Fs: float
-    :param Fs: sampling rate of data streams
-    :type fc_min, fc_max: float
-    :param fc_min, fc_max: corner frequencies used for preprocessing
-    :type taper_fract: float
-    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
-
-    :return: preprocessed data (dim: [number of samples, number of stations])
-    """
-    if prepr == 0:
-        data = signal.detrend(matr, axis=0)
-
-    elif prepr == 1:
-        # generate frequency vector and butterworth filter
-        b, a = signal.butter(4, np.array([fc_min, fc_max]) / Fs * 2, btype="bandpass")
-        # filter data and normalize it by maximum energy
-        data = signal.filtfilt(b, a, signal.detrend(matr, axis=0), axis=0)
-        fact = np.sqrt(np.dot(np.ones((data.shape[0], 1)), np.sum(data**2, axis=0).reshape((1, data.shape[1]))))
-        data = np.divide(data, fact)
-
-    elif prepr == 2:
-        nfft = nearest_powof2(matr.shape[0])
-        Y = np.fft.fft(matr, n=nfft, axis=0)
-        f = np.fft.fftfreq(nfft, 1./float(Fs))
-
-        # whiten: discard all amplitude information within range fc
-        Y_white = np.zeros(Y.shape)
-        J = np.where((f > fc_min) & (f < fc_max))
-        Y_white[J, :] = np.exp(1j * np.angle(Y[J, :]))
-
-        # now taper within taper_fract
-        deltaf = (fc_max - fc_min) * taper_fract
-        Jdebut = np.where((f > fc_min) & (f < (fc_min + deltaf)))
-        Jfin = np.where((f > (fc_max - deltaf)) & (f < fc_max))
-        for ii in range(Y.shape[1]):
-            if len(Jdebut[0]) > 1:
-                Y_white[Jdebut, ii] = np.multiply(Y_white[Jdebut, ii],
-                            np.sin(np.pi / 2 * np.arange(0, len(Jdebut[0])) / len(Jdebut[0]))**2)
-            if len(Jfin[0]) > 1:
-                Y_white[Jfin, ii] = np.multiply(Y_white[Jfin, ii],
-                            np.cos(np.pi / 2 * np.arange(0, len(Jfin[0])) / len(Jfin[0]))**2)
-
-        # perform inverse fft to obtain time signal
-        # data = 2*np.real(np.fft.ifft(Y_white, n=nfft, axis=0))
-        data = np.fft.ifft(Y_white, n=nfft, axis=0)
-        # normalize it by maximum energy
-        fact = np.sqrt(np.dot(np.ones((data.shape[0], 1)), np.sum(data**2, axis=0).reshape((1, data.shape[1]))))
-        data = np.divide(data, fact)
-    return data
-
-
 def transfer_function(u, freq, easting, northing, elevation):
     """
     Function to calculate the response of an array.
@@ -271,16 +214,13 @@ def annul_dominant_interferers(CSDM, neig, data):
     return csdm
 
 
-def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
-                 fc_min=1, fc_max=10, taper_fract=0.1, norm=True):
+def csdm_eigvals(matr, fmin, fmax, Fs, w_length, w_delay, df=0.2, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
 
     :type matr: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
-    :type prepr: integer
-    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
     :param fmin, fmax: frequency range for which the beamforming result is calculated
     :type Fs: float
@@ -291,10 +231,6 @@ def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
     :param w_delay: delay of sliding window in seconds with respect to previous window
     :type df: float
     :param df: frequency step between fmin and fmax
-    :type fc_min, fc_max: float
-    :param fc_min, fc_max: corner frequencies used for preprocessing
-    :type taper_fract: float
-    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
     :type norm: boolean
     :param norm: if True (default), beam power is normalized
 
@@ -304,7 +240,7 @@ def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
         as of Jun 15 2018.
     """
 
-    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    data = matr
     # number of stations
     n_stats = data.shape[1]
     # extract number of data points
@@ -362,9 +298,8 @@ def csdm_eigvals(matr, prepr, fmin, fmax, Fs, w_length, w_delay, df=0.2,
     return eigvals / len(indice_freq)
 
 
-def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
-        Fs, w_length, w_delay, baz=None, processor="bartlett", df=0.2, fc_min=1,
-        fc_max=10, taper_fract=0.1, neig=0, norm=True):
+def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
+        w_delay, baz=None, processor="bartlett", df=0.2, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -377,8 +312,6 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
     :param svmin, svmax: slowness/velocity interval used to calculate replica vector
     :type dsv: float
     :param dsv: slowness/velocity step used to calculate replica vector
-    :type prepr: integer
-    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type slow: boolean 
     :param slow: if true, svmin, svmax, dsv are slowness values. if false, velocity values
     :type fmin, fmax: float
@@ -396,10 +329,6 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
         replica vecotr. see Corciulo et al., 2012
     :type df: float
     :param df: frequency step between fmin and fmax
-    :type fc_min, fc_max: float
-    :param fc_min, fc_max: corner frequencies used for preprocessing
-    :type taper_fract: float
-    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
     :type neig: integer
     :param neig: number of dominant CSDM eigenvectors to annul from the data.
         enables to suppress strong sources.
@@ -412,7 +341,7 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
         beamformer (dim: [number of bazs, number of cs])
     """
 
-    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    data = matr
     # number of stations
     n_stats = data.shape[1]
 
@@ -515,10 +444,9 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, prepr, fmin, fmax,
     return teta, s*1000., beamformer.T
 
 
-def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, 
-        svrng, ds, slow, prepr, fmin, fmax, fc_min, fc_max, Fs, w_length,
-        w_delay, processor="bartlett", df=0.2, taper_fract=0.1, neig=0,
-        norm=True):
+def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
+        slow, fmin, fmax, Fs, w_length, w_delay,  processor="bartlett", df=0.2,
+        neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
@@ -542,12 +470,8 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz,
     :param ds: slowness step used to calculate replica vector
     :type slow: boolean 
     :param slow: if true, svmin, svmax, dsv are slowness values. if false, velocity values
-    :type prepr: integer
-    :param prepr: type of preprocessing. 0=None, 1=bandpass filter, 2=spectral whitening
     :type fmin, fmax: float
     :param fmin, fmax: frequency range for which the beamforming result is calculated
-    :type fc_min, fc_max: float
-    :param fc_min, fc_max: corner frequencies used for preprocessing
     :type Fs: float
     :param Fs: sampling rate of data streams
     :type w_length: float
@@ -559,8 +483,6 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz,
         replica vecotr. see Corciulo et al., 2012
     :type df: float
     :param df: frequency step between fmin and fmax
-    :type taper_fract: float
-    :param taper_fract: percentage of frequency band which is tapered after spectral whitening
     :type neig: integer
     :param neig: number of dominant CSDM eigenvectors to annul from the data.
         enables to suppress strong sources.
@@ -574,8 +496,7 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz,
         beamformer (dim: [number y-grid points, number x-grid points, number cs])
     """
 
-    # preprocess data
-    data = preprocess(matr, prepr, Fs, fc_min, fc_max, taper_fract)
+    data = matr 
     # number of stations
     n_stats = data.shape[1]
 
@@ -663,7 +584,7 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz,
         toto = data[:, ii]
         # now loop over shots
         n = 0
-        while (n * npts_delay + npts_win) < npts:
+        while (n * npts_delay + npts_win) <= npts:
             # calculate DFT
             # dim: [number frequencies]
             adjust = np.dot(toto[n*npts_delay: n*npts_delay+npts_win][:, None],
@@ -681,10 +602,11 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz,
     for ll in range(freq.size):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        if n == 1:
-            K = np.dot(vect_data[ll, :, :].conj().T, vect_data[ll, :, :])
-        else:
-            K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
+        #if n == 1:
+        #    K = np.dot(vect_data[ll, :, :].conj().T, vect_data[ll, :, :])
+        #else:
+        #    K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
+        K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
 
         if np.linalg.matrix_rank(K) < n_stats:
             warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
