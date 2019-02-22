@@ -299,6 +299,31 @@ def csdm_eigvals(matr, fmin, fmax, Fs, w_length, w_delay, df=0.2, norm=True):
 
 
 
+def calculate_CSDM(dft_array, neig=0, norm=True):
+    """
+    Calculate CSDM matrix for beamforming.
+    :param dft_array: 2-Dim array containing DFTs of all stations
+        and for multiple time windows. dim: [number stations, number windows]
+    :param neig: Number of eigenvalues to project out.
+    :param norm: If True, normalize CSDM matrix.
+    """
+    # CSDM matrix
+    K = np.dot(dft_array, dft_array.conj().T)
+    if np.linalg.matrix_rank(K) < dft_array.shape[0]:
+        warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+
+    # annul dominant source 
+    if neig > 0:
+        K = annul_dominant_interferers(K, neig, dft_array)
+
+    # normalize
+    if norm:
+        K /= np.linalg.norm(K)
+
+    return K
+
+
+
 def phase_matching(replica, K, processor):
     """
     Do phase matching of the replica vector with the CSDM matrix.
@@ -459,18 +484,7 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     for ll in range(len(indice_freq)):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
-    
-        if np.linalg.matrix_rank(K) < n_stats:
-            warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
-
-        # annul dominant source 
-        if neig > 0:
-            K = annul_dominant_interferers(K, neig, vect_data_adaptive[ll, :, :])
-
-        if norm:
-            K /= np.linalg.norm(K)
-
+        K = calculate_CSDM(vect_data_adaptive[ll,:,:], neig, norm)
 
         # calculate replica vector
         replica = np.exp(-1j * (xscoord * np.cos(np.radians(90 - teta_)) \
