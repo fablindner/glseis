@@ -298,13 +298,82 @@ def csdm_eigvals(matr, fmin, fmax, Fs, w_length, w_delay, df=0.2, norm=True):
     return eigvals / len(indice_freq)
 
 
-def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
+
+def calculate_CSDM(dft_array, neig=0, norm=True):
+    """
+    Calculate CSDM matrix for beamforming.
+    :param dft_array: 2-Dim array containing DFTs of all stations
+        and for multiple time windows. dim: [number stations, number windows]
+    :param neig: Number of eigenvalues to project out.
+    :param norm: If True, normalize CSDM matrix.
+    """
+    # CSDM matrix
+    K = np.dot(dft_array, dft_array.conj().T)
+    if np.linalg.matrix_rank(K) < dft_array.shape[0]:
+        warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+
+    # annul dominant source 
+    if neig > 0:
+        K = annul_dominant_interferers(K, neig, dft_array)
+
+    # normalize
+    if norm:
+        K /= np.linalg.norm(K)
+
+    return K
+
+
+
+def phase_matching(replica, K, processor):
+    """
+    Do phase matching of the replica vector with the CSDM matrix.
+    :param replica: 2-D array containing the replica vectors of all parameter
+        combinations (dim: [n_stats, n_param])
+    :param K: 2-D array CSDM matrix (dim: [n_stats, n_stats])
+    :param processor: Processor used for phase matching. bartlett or adaptive.
+    """
+    # calcualte inverse of CSDM matrix for adaptive processor
+    if processor == "adaptive":
+        K = np.linalg.inv(K)
+
+    # reshape K matrix (or inverse of K) and append copy of it n_param times
+    # along third dimension
+    n_stats, n_param = replica.shape
+    K = np.reshape(K, (n_stats, n_stats, 1))
+    K = np.tile(K, (1, 1, n_param))
+
+    # bartlett processor
+    if processor == "bartlett":
+        # initialize array for dot product
+        dot1 = np.zeros((n_stats, n_param), dtype=complex)
+        # first dot product - replica.conj().T with K
+        for i in range(n_stats):
+            dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
+        # second dot product - dot1 with replica
+        beam = abs(np.sum(np.multiply(dot1, replica), axis=0))
+
+    # adaptive processor
+    elif processor == "adaptive":
+        # initialize array for dot product
+        dot1 = np.zeros((n_stats, n_param), dtype=complex)
+        # first dot product - replica.conj().T with K_inv 
+        for i in range(n_stats):
+            dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
+        # second dot product - dot1 with replica
+        dot2 = np.sum(np.multiply(dot1, replica), axis=0)
+        beam = abs((1. + 0.j) / dot2)
+
+    return beam
+    
+
+
+def plwave_beamformer(data, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
         w_delay, baz=None, processor="bartlett", df=0.2, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
 
-    :type matr: numpy.ndarray
+    :type data: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
@@ -341,7 +410,6 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
         beamformer (dim: [number of bazs, number of cs])
     """
 
-    data = matr
     # number of stations
     n_stats = data.shape[1]
 
@@ -355,93 +423,82 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     else:
         v = np.arange(svmin, svmax + dsv, dsv) * 1000.
         s = 1. / v
+
+    # create meshgrids
+    teta_, s_ = np.meshgrid(teta, s)
+    n_param = teta_.size
+    # reshape
+    teta_ = teta_.reshape(n_param)
+    s_ = s_.reshape(n_param)
+    # reshape for efficient calculation
+    xscoord = np.tile(scoord[:,0].reshape(n_stats, 1), (1, n_param)) 
+    yscoord = np.tile(scoord[:,1].reshape(n_stats, 1), (1, n_param))
+    teta_ = np.tile(teta_, (n_stats, 1))
+    s_ = np.tile(s_, (n_stats, 1))
+
     # extract number of data points
-    Nombre = data[:, 1].size
-    # construct time window
-    time = np.arange(0, Nombre) / Fs
+    npts = data[:, 1].size
     # construct analysis frequencies
-    indice_freq = np.arange(fmin, fmax+df, df)
-    # construct analysis window for entire hour and delay
-    interval = np.arange(0, np.ceil(w_length * Fs) + 1, dtype=int)
-    delay = int(w_delay * Fs)
+    freq = np.arange(fmin, fmax+df, df)
+    # construct time vector for sliding window 
+    w_time = np.arange(0, w_length, 1./Fs)
+    npts_win = w_time.size
+    npts_delay = int(w_delay * Fs)
     # number of analysis windows ('shots')
-    if delay > 0:
-        numero_shots = (Nombre - len(interval)) // delay + 1
-    elif delay == 0:
-        numero_shots = 1
-    
+    nshots = int(np.floor((npts - w_time.size) / npts_delay)) + 1
+
     # initialize data steering vector:
     # dim: [number of frequencies, number of stations, number of analysis windows]
-    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
-    
-    # initialize beamformer
-    # dim: [number baz, number app. vel.]
-    beamformer = np.zeros((len(teta), len(s)))
+    vect_data = np.zeros((freq.size, n_stats, nshots), dtype=np.complex)
     
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
-    matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+    matrice_int = np.exp(2. * np.pi * 1j * np.dot(w_time[:, None], freq[:, None].T))
 
-    # loop over stations
+    # initialize beamformer
+    # dim: [n_param]
+    beamformer = np.zeros(n_param)
+
+    # calculate DFTs
     for ii in range(n_stats):
         toto = data[:, ii]
         # now loop over shots
-        for jj in range(numero_shots):
-        #while (numero * delay + len(interval)) <= len(toto):
+        n = 0
+        while (n * npts_delay + npts_win) <= npts:
             # calculate DFT
             # dim: [number frequencies]
-            adjust = np.dot(toto[jj * delay + interval][:, None], np.ones((1, len(indice_freq))))
-            test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
-            # fill data steering vector: ii'th station, numero'th shot.
+            adjust = np.dot(toto[n*npts_delay: n*npts_delay+npts_win][:,None],
+                     np.ones((1, len(freq))))
+            # mean averages over time axis
+            data_freq = np.mean(np.multiply(adjust, matrice_int), axis=0)
+            # fill data steering vector: ii'th station, n'th shot.
             # normalize in order not to bias strongest seismogram.
             # dim: [number frequencies, number stations, number shots]
-            vect_data_adaptive[:, ii, jj] = (test / abs(test)).conj().T
-            #numero += 1
+            vect_data[:, ii, n] = (data_freq / abs(data_freq)).conj().T
+            n += 1
 
-    # loop over frequencies
-    for ll in range(len(indice_freq)):
+    # loop over frequencies and do phase matching
+    for ll in range(len(freq)):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        K = np.dot(vect_data_adaptive[ll, :, :], vect_data_adaptive[ll, :, :].conj().T)
-    
-        if np.linalg.matrix_rank(K) < n_stats:
-            warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
+        K = calculate_CSDM(vect_data[ll,:,:], neig, norm)
 
-        # annul dominant source 
-        if neig > 0:
-            K = annul_dominant_interferers(K, neig, vect_data_adaptive[ll, :, :])
+        # calculate replica vector
+        replica = np.exp(-1j * (xscoord * np.cos(np.radians(90 - teta_)) \
+                              + yscoord * np.sin(np.radians(90 - teta_))) \
+                              * 2. * np.pi * freq[ll] * s_)
+        replica /= np.linalg.norm(replica, axis=0)
+        replica = np.reshape(replica, (n_stats, n_param))
 
-        if norm:
-            K /= np.linalg.norm(K)
+        # do phase matching
+        beamformer += phase_matching(replica, K, processor)
 
-        if processor == "adaptive":
-            K_inv = np.linalg.inv(K)
-    
-        # loop over backazimuth
-        for bb in range(len(teta)):
-            # loop over apparent velocity
-            for cc in range(len(s)):
-    
-                # define and normalize replica vector (neglect amplitude information)
-                omega = np.exp(-1j * (scoord[:, 0] * np.cos(np.radians(90 - teta[bb])) \
-                                      + scoord[:, 1] * np.sin(np.radians(90 - teta[bb]))) \
-                                      * 2. * np.pi * indice_freq[ll] * s[cc])
-                omega /= np.linalg.norm(omega)
-    
-                # calculate processors and save results
-                replica = omega[:, None]
-                # bartlett
-                if processor == "bartlett":
-                    beamformer[bb, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
-                # adaptive - Note that replica.conj().T * replica = 1. + 0j
-                elif processor == "adaptive":
-                    beamformer[bb, cc] += abs(np.dot(replica.conj().T, replica) \
-                                              / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
-                else:
-                    raise ValueError("No processor called '%s'" % processor)
-    beamformer /= indice_freq.size
+    # normalize by deviding through number of discrete frequencies
+    beamformer /= freq.size
+    # reshape, dim: [number baz, number slowness]
+    beamformer = np.reshape(beamformer, (s.size, teta.size))
     teta -= 180
-    return teta, s*1000., beamformer.T
+    return teta, s*1000., beamformer
 
 
 def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
