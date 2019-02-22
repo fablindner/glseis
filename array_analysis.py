@@ -501,7 +501,7 @@ def plwave_beamformer(data, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     return teta, s*1000., beamformer
 
 
-def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
+def matchedfield_beamformer(data, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
         slow, fmin, fmax, Fs, w_length, w_delay,  processor="bartlett", df=0.2,
         neig=0, norm=True):
     """
@@ -511,8 +511,8 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
     specified with xmax, ymax, zmax. In this case, dx, dy, and dz need to be set
     to zero!
     
-    :type matr: numpy.ndarray
-    :param matr: time series of used stations (dim: [number of samples, number of stations])
+    :type data: numpy.ndarray
+    :param data: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
     :type xrng, yrng, zrng: tuple
@@ -553,7 +553,6 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
         beamformer (dim: [number y-grid points, number x-grid points, number cs])
     """
 
-    data = matr 
     # number of stations
     n_stats = data.shape[1]
 
@@ -635,7 +634,6 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
     # initialize array for beamformer 
     beamformer = np.zeros(n_param)
 
-
     # calculate DFTs 
     for ii in range(n_stats):
         toto = data[:, ii]
@@ -659,24 +657,7 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
     for ll in range(freq.size):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        #if n == 1:
-        #    K = np.dot(vect_data[ll, :, :].conj().T, vect_data[ll, :, :])
-        #else:
-        #    K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
-        K = np.dot(vect_data[ll, :, :], vect_data[ll, :, :].conj().T)
-
-        if np.linalg.matrix_rank(K) < n_stats:
-            warnings.warn("Warning! Poorly conditioned cross-spectral-density matrix.")
-
-        # annul dominant source 
-        if neig > 0:
-            K = annul_dominant_interferers(K, neig, vect_data[ll, :, :])
-
-        if norm:
-            K /= np.linalg.norm(K)
-
-        if processor == "adaptive":
-            K_inv = np.linalg.inv(K)
+        K = calculate_CSDM(vect_data[ll,:,:], neig, norm)
 
         # calculate replica vector
         replica = np.exp(-1j * np.sqrt((xscoord - xgrid)**2 \
@@ -684,39 +665,8 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
         replica /= np.linalg.norm(replica, axis=0)
         replica = np.reshape(replica, (n_stats, n_param))
 
-        # reshape K matrix and append copy of it n_param times along third dimension  
-        K = np.reshape(K, (n_stats, n_stats, 1))
-        K = np.tile(K, (1, 1, n_param))
-
-        
-        # perform MFP
-        # bartlett processor
-        if processor == "bartlett":
-            # initialize array for dot product
-            dot1 = np.zeros((n_stats, n_param), dtype=complex)
-            # first dot product - replica.conj().T with K
-            for i in range(n_stats):
-                dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
-            # second dot product - dot1 with replica
-            beamformer += abs(np.sum(np.multiply(dot1, replica), axis=0))
-
-
-        # adaptive processor
-        elif processor == "adaptive":
-            # initialize some arrays
-            K_inv = np.reshape(K_inv, (n_stats, n_stats, 1))
-            K_inv = np.tile(K_inv, (1, 1, n_param))
-            dot1 = np.zeros((n_stats, n_param), dtype=complex)
-            # first dot product - replica.conj().T with K_inv 
-            for i in range(n_stats):
-                dot1[i] = np.sum(np.multiply(replica.conj(), K_inv[:,i,:]), axis=0)
-            # second dot product - dot1 with replica
-            dot2 = np.sum(np.multiply(dot1, replica), axis=0)
-            beamformer += abs((1. + 0.j) / dot2)
-
-        else:
-            raise ValueError("No processor called '%s'" % processor)
-
+        # do phase matching
+        beamformer += phase_matching(replica, K, processor)
 
     # normalize beamformer and reshape
     beamformer /= freq.size
