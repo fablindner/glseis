@@ -501,7 +501,7 @@ def plwave_beamformer(data, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     return teta, s*1000., beamformer
 
 
-def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
+def matchedfield_beamformer(data, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
         slow, fmin, fmax, Fs, w_length, w_delay,  processor="bartlett", df=0.2,
         neig=0, norm=True):
     """
@@ -511,8 +511,8 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
     specified with xmax, ymax, zmax. In this case, dx, dy, and dz need to be set
     to zero!
     
-    :type matr: numpy.ndarray
-    :param matr: time series of used stations (dim: [number of samples, number of stations])
+    :type data: numpy.ndarray
+    :param data: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
     :type xrng, yrng, zrng: tuple
@@ -553,7 +553,6 @@ def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
         beamformer (dim: [number y-grid points, number x-grid points, number cs])
     """
 
-    data = matr 
     # number of stations
     n_stats = data.shape[1]
 
