@@ -438,58 +438,56 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     s_ = np.tile(s_, (n_stats, 1))
 
     # extract number of data points
-    Nombre = data[:, 1].size
-    # construct time window
-    time = np.arange(0, Nombre) / Fs
+    npts = data[:, 1].size
     # construct analysis frequencies
-    indice_freq = np.arange(fmin, fmax+df, df)
-    # construct analysis window for entire hour and delay
-    interval = np.arange(0, np.ceil(w_length * Fs) + 1, dtype=int)
-    delay = int(w_delay * Fs)
+    freq = np.arange(fmin, fmax+df, df)
+    # construct time vector for sliding window 
+    w_time = np.arange(0, w_length, 1./Fs)
+    npts_win = w_time.size
+    npts_delay = int(w_delay * Fs)
     # number of analysis windows ('shots')
-    if delay > 0:
-        numero_shots = (Nombre - len(interval)) // delay + 1
-    elif delay == 0:
-        numero_shots = 1
-    
+    nshots = int(np.floor((npts - w_time.size) / npts_delay)) + 1
+
     # initialize data steering vector:
     # dim: [number of frequencies, number of stations, number of analysis windows]
-    vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
+    vect_data = np.zeros((freq.size, n_stats, nshots), dtype=np.complex)
     
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
-    matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+    matrice_int = np.exp(2. * np.pi * 1j * np.dot(w_time[:, None], freq[:, None].T))
 
     # initialize beamformer
     # dim: [n_param]
     beamformer = np.zeros(n_param)
 
-    # loop over stations
+    # calculate DFTs
     for ii in range(n_stats):
         toto = data[:, ii]
         # now loop over shots
-        for jj in range(numero_shots):
-        #while (numero * delay + len(interval)) <= len(toto):
+        n = 0
+        while (n * npts_delay + npts_win) <= npts:
             # calculate DFT
             # dim: [number frequencies]
-            adjust = np.dot(toto[jj * delay + interval][:, None], np.ones((1, len(indice_freq))))
-            test = np.mean(np.multiply(adjust, matrice_int), axis=0)  # mean averages over time axis
-            # fill data steering vector: ii'th station, numero'th shot.
+            adjust = np.dot(toto[n*npts_delay: n*npts_delay+npts_win][:,None],
+                     np.ones((1, len(freq))))
+            # mean averages over time axis
+            data_freq = np.mean(np.multiply(adjust, matrice_int), axis=0)
+            # fill data steering vector: ii'th station, n'th shot.
             # normalize in order not to bias strongest seismogram.
             # dim: [number frequencies, number stations, number shots]
-            vect_data_adaptive[:, ii, jj] = (test / abs(test)).conj().T
-            #numero += 1
+            vect_data[:, ii, n] = (data_freq / abs(data_freq)).conj().T
+            n += 1
 
     # loop over frequencies
-    for ll in range(len(indice_freq)):
+    for ll in range(len(freq)):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
-        K = calculate_CSDM(vect_data_adaptive[ll,:,:], neig, norm)
+        K = calculate_CSDM(vect_data[ll,:,:], neig, norm)
 
         # calculate replica vector
         replica = np.exp(-1j * (xscoord * np.cos(np.radians(90 - teta_)) \
                               + yscoord * np.sin(np.radians(90 - teta_))) \
-                              * 2. * np.pi * indice_freq[ll] * s_)
+                              * 2. * np.pi * freq[ll] * s_)
         replica /= np.linalg.norm(replica, axis=0)
         replica = np.reshape(replica, (n_stats, n_param))
 
@@ -497,7 +495,7 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
         beamformer += phase_matching(replica, K, processor)
 
     # normalize by deviding through number of discrete frequencies
-    beamformer /= indice_freq.size
+    beamformer /= freq.size
     # reshape, dim: [number baz, number slowness]
     beamformer = np.reshape(beamformer, (s.size, teta.size))
     teta -= 180
