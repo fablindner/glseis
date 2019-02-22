@@ -367,13 +367,13 @@ def phase_matching(replica, K, processor):
     
 
 
-def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
+def plwave_beamformer(data, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
         w_delay, baz=None, processor="bartlett", df=0.2, neig=0, norm=True):
     """
     This routine estimates the back azimuth and phase velocity of incoming waves
     based on the algorithm presented in Corciulo et al., 2012 (in Geophysics).
 
-    :type matr: numpy.ndarray
+    :type data: numpy.ndarray
     :param matr: time series of used stations (dim: [number of samples, number of stations])
     :type scoord: numpy.ndarray
     :param scoord: UTM coordinates of stations (dim: [number of stations, 2])
@@ -410,7 +410,6 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
         beamformer (dim: [number of bazs, number of cs])
     """
 
-    data = matr
     # number of stations
     n_stats = data.shape[1]
 
@@ -478,7 +477,7 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
             vect_data[:, ii, n] = (data_freq / abs(data_freq)).conj().T
             n += 1
 
-    # loop over frequencies
+    # loop over frequencies and do phase matching
     for ll in range(len(freq)):
         # calculate cross-spectral density matrix
         # dim: [number of stations X number of stations]
