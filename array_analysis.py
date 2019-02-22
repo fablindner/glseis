@@ -298,6 +298,50 @@ def csdm_eigvals(matr, fmin, fmax, Fs, w_length, w_delay, df=0.2, norm=True):
     return eigvals / len(indice_freq)
 
 
+
+def phase_matching(replica, K, processor):
+    """
+    Do phase matching of the replica vector with the CSDM matrix.
+    :param replica: 2-D array containing the replica vectors of all parameter
+        combinations (dim: [n_stats, n_param])
+    :param K: 2-D array CSDM matrix (dim: [n_stats, n_stats])
+    :param processor: Processor used for phase matching. bartlett or adaptive.
+    """
+    # calcualte inverse of CSDM matrix for adaptive processor
+    if processor == "adaptive":
+        K = np.linalg.inv(K)
+
+    # reshape K matrix (or inverse of K) and append copy of it n_param times
+    # along third dimension
+    n_stats, n_param = replica.shape
+    K = np.reshape(K, (n_stats, n_stats, 1))
+    K = np.tile(K, (1, 1, n_param))
+
+    # bartlett processor
+    if processor == "bartlett":
+        # initialize array for dot product
+        dot1 = np.zeros((n_stats, n_param), dtype=complex)
+        # first dot product - replica.conj().T with K
+        for i in range(n_stats):
+            dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
+        # second dot product - dot1 with replica
+        beam = abs(np.sum(np.multiply(dot1, replica), axis=0))
+
+    # adaptive processor
+    elif processor == "adaptive":
+        # initialize array for dot product
+        dot1 = np.zeros((n_stats, n_param), dtype=complex)
+        # first dot product - replica.conj().T with K_inv 
+        for i in range(n_stats):
+            dot1[i] = np.sum(np.multiply(replica.conj(), K[:,i,:]), axis=0)
+        # second dot product - dot1 with replica
+        dot2 = np.sum(np.multiply(dot1, replica), axis=0)
+        beam = abs((1. + 0.j) / dot2)
+
+    return beam
+    
+
+
 def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_length,
         w_delay, baz=None, processor="bartlett", df=0.2, neig=0, norm=True):
     """
@@ -355,6 +399,19 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     else:
         v = np.arange(svmin, svmax + dsv, dsv) * 1000.
         s = 1. / v
+
+    # create meshgrids
+    teta_, s_ = np.meshgrid(teta, s)
+    n_param = teta_.size
+    # reshape
+    teta_ = teta_.reshape(n_param)
+    s_ = s_.reshape(n_param)
+    # reshape for efficient calculation
+    xscoord = np.tile(scoord[:,0].reshape(n_stats, 1), (1, n_param)) 
+    yscoord = np.tile(scoord[:,1].reshape(n_stats, 1), (1, n_param))
+    teta_ = np.tile(teta_, (n_stats, 1))
+    s_ = np.tile(s_, (n_stats, 1))
+
     # extract number of data points
     Nombre = data[:, 1].size
     # construct time window
@@ -374,13 +431,13 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
     # dim: [number of frequencies, number of stations, number of analysis windows]
     vect_data_adaptive = np.zeros((len(indice_freq), n_stats, numero_shots), dtype=np.complex)
     
-    # initialize beamformer
-    # dim: [number baz, number app. vel.]
-    beamformer = np.zeros((len(teta), len(s)))
-    
     # construct matrix for DFT calculation
     # dim: [number time points, number frequencies]
     matrice_int = np.exp(2. * np.pi * 1j * np.dot(time[interval][:, None], indice_freq[:, None].T))
+
+    # initialize beamformer
+    # dim: [n_param]
+    beamformer = np.zeros(n_param)
 
     # loop over stations
     for ii in range(n_stats):
@@ -414,34 +471,23 @@ def plwave_beamformer(matr, scoord, svmin, svmax, dsv, slow, fmin, fmax, Fs, w_l
         if norm:
             K /= np.linalg.norm(K)
 
-        if processor == "adaptive":
-            K_inv = np.linalg.inv(K)
-    
-        # loop over backazimuth
-        for bb in range(len(teta)):
-            # loop over apparent velocity
-            for cc in range(len(s)):
-    
-                # define and normalize replica vector (neglect amplitude information)
-                omega = np.exp(-1j * (scoord[:, 0] * np.cos(np.radians(90 - teta[bb])) \
-                                      + scoord[:, 1] * np.sin(np.radians(90 - teta[bb]))) \
-                                      * 2. * np.pi * indice_freq[ll] * s[cc])
-                omega /= np.linalg.norm(omega)
-    
-                # calculate processors and save results
-                replica = omega[:, None]
-                # bartlett
-                if processor == "bartlett":
-                    beamformer[bb, cc] += abs(np.dot(np.dot(replica.conj().T, K), replica))
-                # adaptive - Note that replica.conj().T * replica = 1. + 0j
-                elif processor == "adaptive":
-                    beamformer[bb, cc] += abs(np.dot(replica.conj().T, replica) \
-                                              / (np.dot(np.dot(replica.conj().T, K_inv), replica)))
-                else:
-                    raise ValueError("No processor called '%s'" % processor)
+
+        # calculate replica vector
+        replica = np.exp(-1j * (xscoord * np.cos(np.radians(90 - teta_)) \
+                              + yscoord * np.sin(np.radians(90 - teta_))) \
+                              * 2. * np.pi * indice_freq[ll] * s_)
+        replica /= np.linalg.norm(replica, axis=0)
+        replica = np.reshape(replica, (n_stats, n_param))
+
+        # do phase matching
+        beamformer += phase_matching(replica, K, processor)
+
+    # normalize by deviding through number of discrete frequencies
     beamformer /= indice_freq.size
+    # reshape, dim: [number baz, number slowness]
+    beamformer = np.reshape(beamformer, (s.size, teta.size))
     teta -= 180
-    return teta, s*1000., beamformer.T
+    return teta, s*1000., beamformer
 
 
 def matchedfield_beamformer(matr, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, ds,
