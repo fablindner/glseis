@@ -592,7 +592,7 @@ def matchedfield_beamformer(data, scoord, xrng, yrng, zrng, dx, dy, dz, svrng, d
     else:
         s = np.arange(svrng[0], svrng[1] + ds, ds) / 1000.
     if not slow:
-        s = 1. / s * 1e6
+        s = 1. / (s * 1.e6)
     # extend coordinate grids and slowness grid
     sgrid = np.zeros(xgrid.size) + s[0]
     ssize = sgrid.size
