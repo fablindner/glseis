@@ -128,6 +128,7 @@ def load_beams(fn, method, t1=None, t2=None, powmin=0, slowness=None):
             elif method == "mfp":
                 beams = [beam[:,:,:,ind].reshape((ycoord.size,xcoord.size,zcoord.size,1))\
                          for beam in beams]
+            vel = np.array([vel[ind]])
 
         # max beam power, slowness/velocity and baz values
         pows = [np.max(beam) for beam in beams]
