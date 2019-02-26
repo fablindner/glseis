@@ -86,16 +86,18 @@ def ascii_header():
     return header
 
 
-def load_beams(fn, type, t1=None, t2=None, powmin=0):
+def load_beams(fn, method, t1=None, t2=None, powmin=0, slowness=None):
     """
     Load beamforming arrays and return parameters associated with the maximum
     beam power.
     :param fn: file name
-    :param type: Type of Beamforming result. 'plw' for plane-wave beamforming
+    :param method: Type of Beamforming result. 'plw' for plane-wave beamforming
         or 'mfp' for matched-field processing.
     :param t1: starttime
     :param t2: endtime
     :param powmin: beam power threshold
+    :param slowness: if not None, beamforming reslults associcated with
+        the closes slowness value will be extracted.
     """
 
     # dictionary containing all data
@@ -107,21 +109,35 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0):
         times = data["times"]
         vel = data["sv"]
         beams = data["beams"]
-        if type == "plw":
+        if method == "plw":
             baz = data["baz"]
-        elif type == "mfp":
+        elif method == "mfp":
             xcoord = data["xcoord"]
             ycoord = data["ycoord"]
             zcoord = data["zcoord"]
+
+        # load only beamforming results for a certain slowness
+        if slowness is not None:
+            ind = np.argmin(abs(vel - slowness))
+            print("[INFO] Requested slowness of %.3f s/km, returning %.3f s/km"\
+                    % (slowness, vel[ind]))
+            print("[INFO] Requested velocity of %.3f km/s, returning %.3f km/s"\
+                    % (1. / slowness, 1. / vel[ind]))
+            if method == "plw":
+                beams = [beam[:,ind].reshape((1,baz.size)) for beam in beams]
+            elif method == "mfp":
+                beams = [beam[:,:,:,ind].reshape((ycoord.size,xcoord.size,zcoord.size,1))\
+                         for beam in beams]
+            vel = np.array([vel[ind]])
 
         # max beam power, slowness/velocity and baz values
         pows = [np.max(beam) for beam in beams]
         inds_max = [np.unravel_index(np.argmax(beam), beam.shape) \
                 for beam in beams]
-        if type == "plw":
+        if method == "plw":
             vels = [vel[ind[0]] for ind in inds_max]
             bazs = [baz[ind[1]] for ind in inds_max]
-        elif type == "mfp":
+        elif method == "mfp":
             vels = [vel[ind[3]] for ind in inds_max]
             xepi = [xcoord[ind[1]] for ind in inds_max]
             yepi = [ycoord[ind[0]] for ind in inds_max]
@@ -133,9 +149,9 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0):
         pows = pows[ind]
         times = np.array(times)[ind]
         vels = np.array(vels)[ind]
-        if type == "plw":
+        if method == "plw":
             bazs = np.array(bazs)[ind]
-        elif type == "mfp":
+        elif method == "mfp":
             xepi = np.array(xepi)[ind]
             yepi = np.array(yepi)[ind]
             zhyp = np.array(zhyp)[ind]
@@ -146,9 +162,9 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0):
             pows = pows[ind]
             times = times[ind]
             vels = vels[ind]
-            if type == "plw":
+            if method == "plw":
                 bazs = bazs[ind]
-            elif type == "mfp":
+            elif method == "mfp":
                 xepi = xepi[ind]
                 yepi = yepi[ind]
                 zhyp = zhyp[ind]
@@ -158,16 +174,16 @@ def load_beams(fn, type, t1=None, t2=None, powmin=0):
         pows = pows[ind] 
         times = times[ind]
         vels = vels[ind]
-        if type == "plw":
+        if method == "plw":
             bazs = bazs[ind]
-        elif type == "mfp":
+        elif method == "mfp":
             xepi = xepi[ind]
             yepi = yepi[ind]
             zhyp = zhyp[ind]
 
-        if type == "plw":
+        if method == "plw":
             return times, bazs, vels, pows
-        elif type == "mfp":
+        elif method == "mfp":
             return times, [xepi, yepi, zhyp], vels, pows
 
     except:
