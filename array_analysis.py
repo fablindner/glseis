@@ -152,7 +152,8 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     # array geometry
     ax1 = fig.add_subplot(121)
     ax1.plot(easting, northing, "kv", markersize=12)
-    ax1.text(easting.min(), northing.min() - 30, "Tokimatsu (1997): %.1f m < $\lambda$ < %.1f m" % (dmin, dmax),
+    ax1.text(easting.min(), northing.min() - 30, "Tokimatsu (1997): %.1f m < $\lambda$ < %.1f m"\
+             % (dmin, dmax),
              fontsize=14)
     ax1.set_xlabel("Easting (m)")
     ax1.set_ylabel("Northing (m)")
@@ -169,13 +170,15 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     ax2.set_xlabel("kx (rad/m)")
     ax2.set_ylabel("ky (rad/m)")
     an = np.linspace(0, 2 * np.pi, 100)
-    ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--", label="min lambda: %i m" % lambdamin)
-    ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w", label="max lambda: %i m" % lambdamax)
+    ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--",
+             label="min lambda: %i m" % lambdamin)
+    ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w",
+             label="max lambda: %i m" % lambdamax)
     legend = plt.legend()
     frame = legend.get_frame()
     frame.set_facecolor('0.70')
-    ax2.set_xlim(-max_wvnmbr * 1.25, max_wvnmbr * 1.25)
-    ax2.set_ylim(-max_wvnmbr * 1.25, max_wvnmbr * 1.25)
+    ax2.set_xlim(-kmax, kmax)
+    ax2.set_ylim(-kmax, kmax)
     ax2.set_title("Array Response")
     # runtime
     t2 = UTCDateTime()
