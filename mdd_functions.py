@@ -65,7 +65,7 @@ def calculate_CCF_PSF(Gt, GSt, fs):
     for s in range(num_src):
         for r in range(num_rec):
             GS[s, r, :] = np.fft.rfft(GSt[s, r, :], norm="ortho")
-    
+
     # compute cross-correlation function and point-spread function
     print("Calculate cross-correlation function and point-spread function ...")
     C = np.zeros((num_rec, freqs.size), dtype=complex)
@@ -74,7 +74,7 @@ def calculate_CCF_PSF(Gt, GSt, fs):
         # xcorr function
         for r in range(num_rec):
             C[r, f] = np.sum(G[:, f] * np.conj(GS[:, r, f]))
-    
+
         # point-spread function
         for r1 in range(num_rec):
             for r2 in range(num_rec):
@@ -472,7 +472,7 @@ class MDD():
         """
         plot the mdd responses of one receiver pair for all scenarios
         :param rec: chain receiver, for which the result is shown
-        :param shift: if shift, the causal part is shown in the right hand side 
+        :param shift: if shift, the causal part is shown in the right hand side
             of the seismogram
         :param xlim: tuple holding the limits for the x-axis
         :param norm: if norm, the seismograms are normalized by their maximum
@@ -484,32 +484,37 @@ class MDD():
             time = self.t_acaus
         else:
             time = self.t_caus
+
         # create figure
-        fig = plt.figure(figsize=(8,3.4))
-        ax = fig.add_subplot(111)
-        colors = [self.eth3, self.eth7, self.eth6, self.eth8]
+        fig = plt.figure(figsize=(8, 6))
+        ax1 = fig.add_subplot(211)
+        ax2 = fig.add_subplot(212)
         count = 0
         # loop over scenarios and plot waveforms
         for key in self.scenarios:
-            data = self.res_mdd[key][rec, :]
+            data_ccf = self.res_cc[key][rec, :]
+            data_mdd = self.res_mdd[key][rec, :]
             if norm:
-                data /= data.max()
+                data_ccf /= data_ccf.max()
+                data_mdd /= data_mdd.max()
             if shift:
-                data = np.fft.ifftshift(data)
-            #data = bandpass(data, 50, 80, self.fs)
+                data_ccf = np.fft.ifftshift(data_ccf)
+                data_mdd = np.fft.ifftshift(data_mdd)
             #ax.plot(time, data, colors[count], label=self.scenarios[key], lw=1)
-            ax.plot(time, data, label=self.scenarios[key], lw=0.3)
+            ax1.plot(time, data_ccf, label=self.scenarios[key], lw=0.3)
+            ax2.plot(time, data_mdd, label=self.scenarios[key], lw=0.3)
             count += 1
-        ax.axvline(0.0, color="k")
-        ax.set_xlabel("Lag Time (s)")
-        if xlim is not None:
-            ax.set_xlim(xlim)
-        if norm:
-            ax.set_ylim(-1, 1)
-            ax.set_ylabel("Norm. Amplitude")
-        ax.set_xlabel("Time (s)")
-        #ax.yaxis.set_visible(False)
-        ax.set_ylabel("Norm. amplitude")
+
+        for ax in [ax1, ax2]:
+            ax.axvline(0.0, color="k")
+            if xlim is not None:
+                ax.set_xlim(xlim)
+            if norm:
+                ax.set_ylim(-1, 1)
+                ax.set_ylabel("Norm. Amplitude")
+            else:
+                ax.set_ylabel("Amplitude")
+        ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
         #for d in [150, 450, 750, 1050, 1350, 1650, 1950, 2250, 2550, 2850, 3150, 3450, 3750]:
         #    ax.axvline(d / 1650)
@@ -522,7 +527,7 @@ class MDD():
         plot the mdd and cc responses of one receiver pair for all scenarios
         as a function of time.
         :param rec: chain receiver, for which the result is shown
-        :param shift: if shift, the causal part is shown in the right hand side 
+        :param shift: if shift, the causal part is shown in the right hand side
             of the seismogram
         :param xlim: tuple holding the limits for the x-axis
         :param cmap_rng: tuple holding the color map range.
@@ -616,7 +621,7 @@ class MDD():
             ax4.set_xlim(xlim)
             ax5.set_xlim(xlim)
             ax6.set_xlim(xlim)
-        
+
         plt.savefig("/media/fabian/Data/PhD/Presentations/Other/201905_Grenoble/Figures/mdd.pdf",
                     format="pdf", bbox_inches="tight")
         plt.show()
