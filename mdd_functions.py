@@ -280,23 +280,19 @@ class MDD():
 
 
 
-    def dvv_stretching(self, rec, nrefl, d, v, win_len, dvv_max, dvv_delta):
+    def dvv_stretching(self, rec, t_win, dvv_max, dvv_delta):
         """
         estimates dv/v values with cross-correlation responses and mdd responses
             using a stretching technique
         :param rec: chain receiver used for this analysis
-        :param nrefl: number of reflections used to calculate mdd-dv/v's
-        :param d: distance between the cross-correlation receivers
-        :param v: velocity of the unperturbed medium
-        :param win_len: window length used to cut the direct arrivals and
-            reflections. window will be centered around the theoretical travel
-            time of the homogeneous medium
+        :param t_win: tuple holdind the start and endtime or the window
+            used for stretching.
+        :param dvv_max: maximum dvv value (epsilon) used for the grid search
+        :param dvv_delta: step in dvv (epsilon) value
         :return: array holding dv/v's + cc's obtained from MDD and array holding
             dv/v + cc obtained from CC
         """
-
         print("Calculate dv/v - Stretching ...")
-
         # load data
         time = self.t_caus
         keys = list(self.scenarios.keys())
@@ -304,38 +300,19 @@ class MDD():
         d_mdd = self.res_mdd[keys[1]][rec, :]
         d_cc_ref = self.res_cc[keys[0]][rec, :]
         d_cc = self.res_cc[keys[1]][rec, :]
+        # prepare for stretching the cc and mdd responses
         # vector holding the dv/v values
         dvv = np.arange(-dvv_max, dvv_max+dvv_delta, dvv_delta)
-        ################# CC ###########################################
-        # prepare for stretching the cc response of the perturbed medium
-        tt = d/v
-        t_win = [tt - win_len/2., tt + win_len/2.]
-        #plt.plot(time, d_cc_ref)
-        #plt.plot(time, d_cc)
-        #plt.axvline(t_win[0])
-        #plt.axvline(t_win[1])
-        #plt.show()
+        # indices corresponding to the time window
         win = np.where((time >= t_win[0]) & (time <= t_win[1]))[0]
-        # stretch!
+        # stretch - CC
         eps, cc = stretch(time, d_cc, d_cc_ref, dvv, win, plot=False)
         dvv_cc_cc = np.array([eps, cc])
-        ################# MDD ###########################################
-        # prepare for stretching the mdd response of the perturbed medium
-        dvv_cc_mdd = np.zeros((nrefl, 2))
-        dists = np.zeros(nrefl)
-        for i in range(nrefl):
-            dist = (50. + i*100.)
-            if nrefl == 1:
-                dist += 200.
-            dists[i] = dist
-            tt = dist / v
-            t_win = [tt - win_len/2., tt + win_len/2.]
-            win = np.where((time >= t_win[0]) & (time <= t_win[1]))[0]
-            eps, cc = stretch(time, d_mdd, d_mdd_ref, dvv, win, plot=False)
-            dvv_cc_mdd[i, 0] = eps
-            dvv_cc_mdd[i, 1] = cc
-        #################################################################
-        return dists, dvv_cc_cc, dvv_cc_mdd
+        # stretch - MDD
+        eps, cc = stretch(time, d_mdd, d_mdd_ref, dvv, win, plot=False)
+        dvv_cc_mdd = np.array([eps, cc])
+
+        return dvv_cc_cc, dvv_cc_mdd
 
 
 
@@ -491,12 +468,13 @@ class MDD():
 
 
 
-    def plot_all_velocities(self, rec, shift=False, norm=True):
+    def plot_all_velocities(self, rec, xlim=None, shift=False, norm=True):
         """
         plot the mdd responses of one receiver pair for all scenarios
         :param rec: chain receiver, for which the result is shown
         :param shift: if shift, the causal part is shown in the right hand side 
             of the seismogram
+        :param xlim: tuple holding the limits for the x-axis
         :param norm: if norm, the seismograms are normalized by their maximum
             value
         :return: no data is returned; plot is displayed
@@ -519,10 +497,13 @@ class MDD():
             if shift:
                 data = np.fft.ifftshift(data)
             #data = bandpass(data, 50, 80, self.fs)
-            ax.plot(time, data, colors[count], label=self.scenarios[key], lw=1)
+            #ax.plot(time, data, colors[count], label=self.scenarios[key], lw=1)
+            ax.plot(time, data, label=self.scenarios[key], lw=0.3)
             count += 1
         ax.axvline(0.0, color="k")
         ax.set_xlabel("Lag Time (s)")
+        if xlim is not None:
+            ax.set_xlim(xlim)
         if norm:
             ax.set_ylim(-1, 1)
             ax.set_ylabel("Norm. Amplitude")
@@ -530,17 +511,116 @@ class MDD():
         #ax.yaxis.set_visible(False)
         ax.set_ylabel("Norm. amplitude")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
-        #ax.set_xlim(-0.5, 0.5)
-        #ax.axvline(0.028, color=self.eth6, lw=22, alpha=0.2)
-        #ax.axvline(0.087, color=self.eth6, lw=22, alpha=0.2)
-        #ax.axvline(0.147, color=self.eth6, lw=22, alpha=0.2)
-        #ax.axvline(0.206, color=self.eth6, lw=22, alpha=0.2)
-        #ax.axvline(0.265, color=self.eth6, lw=22, alpha=0.2)
-        dx = np.arange(100., 1100., 100.)
-        for i in range(10):
-            ax.axvline(dx[i] / 1650., color="k", alpha=0.5)
+        #for d in [150, 450, 750, 1050, 1350, 1650, 1950, 2250, 2550, 2850, 3150, 3450, 3750]:
+        #    ax.axvline(d / 1650)
         plt.show()
-        plt.close()
+
+
+    def plot_waveform_matrix(self, rec, xlim=None, cmap_rng=None, shift=False,
+            norm=True):
+        """
+        plot the mdd and cc responses of one receiver pair for all scenarios
+        as a function of time.
+        :param rec: chain receiver, for which the result is shown
+        :param shift: if shift, the causal part is shown in the right hand side 
+            of the seismogram
+        :param xlim: tuple holding the limits for the x-axis
+        :param cmap_rng: tuple holding the color map range.
+        :param norm: if norm, the seismograms are normalized by their maximum
+            value
+        :return: no data is returned; plot is displayed
+        """
+        # select time vector
+        if shift:
+            time = self.t_acaus
+        else:
+            time = self.t_caus
+        # make CC and MDD data matrices
+        nsc = len(self.scenarios)
+        d_mdd = np.zeros((nsc, time.size))
+        d_ccf = np.zeros((nsc, time.size))
+        for i, key in enumerate(self.scenarios):
+            data_mdd = self.res_mdd[key][rec, :]
+            data_ccf = self.res_cc[key][rec, :]
+            if norm:
+                data_mdd /= data_mdd.max()
+                data_ccf /= data_ccf.max()
+            if shift:
+                data_mdd = np.fft.ifftshift(data_mdd)
+                data_ccf = np.fft.ifftshift(data_ccf)
+            d_mdd[i,:] = data_mdd
+            d_ccf[i,:] = data_ccf
+
+        # make figure
+        fig = plt.figure(figsize=(6.5,6))
+        ax1 = fig.add_axes([0.1,0.7,0.4,0.15])
+        if cmap_rng is not None:
+            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="binary",
+                    vmin=cmap_rng[0], vmax=cmap_rng[1])
+        else:
+            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="binary")
+        ax1.set_yticks(np.arange(nsc))
+        #ax1.set_yticklabels(self.scenarios)
+        ax1.set_yticklabels([])
+        ax1.axvline(0, color="r", linestyle="--", lw=1)
+
+        ax2 = fig.add_axes([0.55,0.7,0.4,0.15])
+        if cmap_rng is not None:
+            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="binary",
+                    vmin=cmap_rng[0], vmax=cmap_rng[1])
+        else:
+            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="binary")
+        ax2.set_yticks(np.arange(nsc))
+        #ax2.set_yticklabels(self.scenarios)
+        ax2.set_yticklabels([])
+        ax2.axvline(0, color="r", linestyle="--", lw=1)
+
+
+        ax3 = fig.add_axes([0.1,0.1,0.4,0.55])
+        for i in range(nsc):
+            ax3.plot(time, d_ccf[i,:] + i, "k", lw=0.6)
+        ax3.axvline(0, color="r", linestyle="--", lw=1)
+        ax3.set_xlabel("Time (s)")
+        ax3.set_ylabel("Day of deployment")
+
+        ax4 = fig.add_axes([0.55,0.1,0.4,0.55])
+        #ax4.axvline(0.61, lw=0.4)
+        #ax4.axvline(1.25, lw=0.4)
+        ax4.axvline(0.0621, lw=0.4)
+        ax4.axvline(0.559, lw=0.4)
+        ax4.axvline(0.683, lw=0.4)
+        ax4.axvline(1.189, lw=0.4)
+        for i in range(nsc):
+            ax4.plot(time, d_mdd[i,:] + i, "k", lw=0.6)
+        ax4.axvline(0, color="r", linestyle="--", lw=1)
+        ax4.set_xlabel("Time (s)")
+
+        ax5 = fig.add_axes([0.1,0.85,0.4,0.1])
+        ax5.plot(time, np.sum(d_ccf, axis=0) / nsc, lw=0.8)
+        ax5.set_yticks([])
+        ax5.set_xticks([])
+        ax5.axvline(0, color="r", linestyle="--", lw=1)
+        ax5.set_title("SI by CC")
+
+        ax6 = fig.add_axes([0.55,0.85,0.4,0.1])
+        ax6.plot(time, np.sum(d_mdd, axis=0) / nsc, lw=0.8)
+        ax6.set_yticks([])
+        ax6.set_xticks([])
+        ax6.axvline(0, color="r", linestyle="--", lw=1)
+        ax6.set_title("SI by MDD / VRS")
+
+        if xlim is not None:
+            ax1.set_xlim(xlim)
+            ax2.set_xlim(xlim)
+            ax3.set_xlim(xlim)
+            ax4.set_xlim(xlim)
+            ax5.set_xlim(xlim)
+            ax6.set_xlim(xlim)
+        
+        plt.savefig("/media/fabian/Data/PhD/Presentations/Other/201905_Grenoble/Figures/mdd.pdf",
+                    format="pdf", bbox_inches="tight")
+        plt.show()
+
 
 
 
