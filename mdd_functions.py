@@ -82,9 +82,11 @@ def calculate_CCF_PSF(Gt, GSt, fs):
     return freqs, C, T
 
 
-
 class MDD():
+    """Class facilitating the MDD processing."""
+
     def __init__(self, scenarios, fname, epssq, filt, fmin, fmax, bnds):
+        """Initialize MDD class."""
         self.scenarios = scenarios
         self.fname = fname
         self.epssq = epssq
@@ -113,12 +115,8 @@ class MDD():
         self.eth7 = "#A8322D"   # red
         self.eth8 = "#007A92"   # blue
 
-
-
     def read_arrays(self):
-        """
-        read data arrays for all scenarios
-        """
+        """Read data arrays for all scenarios."""
         count = 0
         for key in self.scenarios:
             path = self.scenarios[key] + self.fname
@@ -139,20 +137,20 @@ class MDD():
             self.srcs.update({key: srcs})
             # test if values are the same as in previous scenarios
             if count > 0:
-                if not np.array_equal(freqs ,self.freqs):
-                    warnings.warn("Parameter 'freqs' is not the same as for " \
+                if not np.array_equal(freqs, self.freqs):
+                    warnings.warn("Parameter 'freqs' is not the same as for "
                                 + "the previous scenario", UserWarning)
                 if fs != self.fs:
-                    warnings.warn("Parameter 'fs' is not the same as for the " \
+                    warnings.warn("Parameter 'fs' is not the same as for the "
                                 + "previous scenario", UserWarning)
                 if fmin_prep != self.fmin_prep:
-                    warnings.warn("Parameter 'fmin' is not the same as for " \
+                    warnings.warn("Parameter 'fmin' is not the same as for "
                                 + "the previous scenario", UserWarning)
                 if fmax_prep != self.fmax_prep:
-                    warnings.warn("Parameter 'fmax' is not the same as for " \
+                    warnings.warn("Parameter 'fmax' is not the same as for "
                                 + "the previous scenario", UserWarning)
                 if npts != self.npts:
-                    warnings.warn("Parameter 'npts' is not the same as for " \
+                    warnings.warn("Parameter 'npts' is not the same as for "
                                 + "the previous scenario", UserWarning)
 
             self.freqs = freqs
@@ -163,12 +161,11 @@ class MDD():
             self.npts = npts
             count += 1
 
-
-
     def make_taper(self, a, b):
         """
         Cosine taper acting on the interval [a*f0, b*f0]. Mutes all
-        frequencies above b*f0
+        frequencies above b*f0.
+
         :param a: Taper acts on frequencies higher than a*f0
             [f0 = (self.fmax_prep - self.fmin_prep) / 2]
         :param b: Frequencies higher than b*f0 are muted by the taper
@@ -186,11 +183,9 @@ class MDD():
         taper[ind_tpr] = tpr
         self.taper = taper
 
-
-
     def inversion(self, fmax, fricker=0):
         """
-        Perform inversion for all scenarios
+        Perform inversion for all scenarios.
 
         :param fmax: inversion is only performed for frequencies smaller fmax
             to speed up the inversion
@@ -215,7 +210,7 @@ class MDD():
             T = self.invdata[key][1]
             for i in range(nrec):
                 for j in range(nrec):
-                    T[i,j] *= self.taper
+                    T[i, j] *= self.taper
             GR = np.zeros((nrec, self.freqs.size), dtype=complex)
             # do the inversion
             freqs_ = self.freqs[self.freqs <= fmax]
@@ -277,12 +272,22 @@ class MDD():
             np.savez(self.scenarios[key] + "RESP_freq_resp_time_epssq_MDD_%s.npz"
                      % self.bnds[:4], GR, self.freqs, GdR, time, self.epssq)
 
+    def calc_stack(self):
+        """Calculate the stack from all scenarios and save it."""
+        if "stack" not in self.scenarios:
+            mdd_res = [self.res_mdd[key] for key in self.scenarios]
+            ccf_res = [self.res_cc[key] for key in self.scenarios]
 
+            self.res_mdd.update({"stack": np.average(np.stack(mdd_res), axis=0)})
+            self.res_cc.update({"stack": np.average(np.stack(ccf_res), axis=0)})
+        else:
+            print("The stack already exists!")
 
     def dvv_stretching(self, rec, t_win, dvv_max, dvv_delta):
         """
-        estimates dv/v values with cross-correlation responses and mdd responses
-            using a stretching technique
+        Estimates dv/v values with cross-correlation responses and mdd responses
+            using a stretching technique.
+
         :param rec: chain receiver used for this analysis
         :param t_win: tuple holdind the start and endtime or the window
             used for stretching.
