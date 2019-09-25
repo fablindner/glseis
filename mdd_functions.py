@@ -283,12 +283,13 @@ class MDD():
         else:
             print("The stack already exists!")
 
-    def dvv_stretching(self, rec, t_win, dvv_max, dvv_delta):
+    def dvv_stretching(self, rec, scs, t_win, dvv_max, dvv_delta):
         """
         Estimates dv/v values with cross-correlation responses and mdd responses
             using a stretching technique.
 
         :param rec: chain receiver used for this analysis
+        :param scs: list of two scenarios used for streching. first element will be reference.
         :param t_win: tuple holdind the start and endtime or the window
             used for stretching.
         :param dvv_max: maximum dvv value (epsilon) used for the grid search
@@ -299,7 +300,7 @@ class MDD():
         print("Calculate dv/v - Stretching ...")
         # load data
         time = self.t_caus
-        keys = list(self.scenarios.keys())
+        keys = list(scs)
         d_mdd_ref = self.res_mdd[keys[0]][rec, :]
         d_mdd = self.res_mdd[keys[1]][rec, :]
         d_cc_ref = self.res_cc[keys[0]][rec, :]
