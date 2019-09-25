@@ -4,16 +4,15 @@ from glseis.filter import ricker
 from glseis.quantity import stretch
 import scipy.signal as signal
 import matplotlib.pyplot as plt
-#import msnoise_move2obspy as msnoise
+# import msnoise_move2obspy as msnoise
 import warnings
 import os
 
 
-
-
 def preprocessing(data, path, muteP, fs, fmin=5, fmax=30):
     """
-    preprocess data. only used for SES3D waveforms !!!
+    Preprocess data. only used for SES3D waveforms.
+
     :param data: data to preprocess
     :param path: path where data is stored
     :param muteP: if muteP, time domain taper is applied to mute the p-wave arrival
@@ -39,15 +38,15 @@ def preprocessing(data, path, muteP, fs, fmin=5, fmax=30):
 
 def calculate_CCF_PSF(Gt, GSt, fs):
     """
-    Function to calculate the frequency-domain cross-correlation and
-    point-spread functions for MDD applications.
+    Calculate the frequency-domain cross-correlation and point-spread
+        functions for MDD applications.
+
     :param Gt: Matrix holding the time series of the single center receiver.
         Shape must be (# sources, # time samples).
     :param GSt: Matrix holding the time series of the boundary receivers.
         Shape must be (# sources, # receivers, # time samples).
     :param fs: sampling frequency.
     """
-
     # get number of sources and number of receivers, and number of time samples
     num_src = GSt.shape[0]
     num_rec = GSt.shape[1]
@@ -255,9 +254,9 @@ class MDD():
                 buff_cc = np.fft.irfft(C[r, :], norm="ortho")
                 if self.filt:
                     GdR[r, :] = bandpass(buff_mdd, self.fmin, self.fmax,
-                                         self.fs, corners=3, zerophase=True)
+                                         self.fs, corners=5, zerophase=True)
                     ccf[r, :] = bandpass(buff_cc, self.fmin, self.fmax,
-                                         self.fs, corners=3, zerophase=True)
+                                         self.fs, corners=5, zerophase=True)
                 else:
                     GdR[r, :] = buff_mdd
                     ccf[r, :] = buff_cc
@@ -516,8 +515,8 @@ class MDD():
                 ax.set_ylabel("Amplitude")
         ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
-        #for d in [150, 450, 750, 1050, 1350, 1650, 1950, 2250, 2550, 2850, 3150, 3450, 3750]:
-        #    ax.axvline(d / 1650)
+        for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
+            ax.axvline(d / 1650)
         plt.show()
 
 
@@ -553,17 +552,18 @@ class MDD():
             if shift:
                 data_mdd = np.fft.ifftshift(data_mdd)
                 data_ccf = np.fft.ifftshift(data_ccf)
-            d_mdd[i,:] = data_mdd
-            d_ccf[i,:] = data_ccf
+            d_mdd[i, :] = data_mdd
+            d_ccf[i, :] = data_ccf
 
         # make figure
         fig = plt.figure(figsize=(6.5,6))
         ax1 = fig.add_axes([0.1,0.7,0.4,0.15])
         if cmap_rng is not None:
-            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="binary",
-                    vmin=cmap_rng[0], vmax=cmap_rng[1])
+            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="bone",
+                    vmin=cmap_rng[0], vmax=cmap_rng[1], rasterized=True)
         else:
-            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="binary")
+            ax1.pcolormesh(time, np.arange(nsc+1), d_ccf, cmap="bone",
+                           rasterized=True)
         ax1.set_yticks(np.arange(nsc))
         #ax1.set_yticklabels(self.scenarios)
         ax1.set_yticklabels([])
@@ -571,10 +571,11 @@ class MDD():
 
         ax2 = fig.add_axes([0.55,0.7,0.4,0.15])
         if cmap_rng is not None:
-            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="binary",
-                    vmin=cmap_rng[0], vmax=cmap_rng[1])
+            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="bone",
+                    vmin=cmap_rng[0], vmax=cmap_rng[1], rasterized=True)
         else:
-            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="binary")
+            ax2.pcolormesh(time, np.arange(nsc+1), d_mdd, cmap="bone",
+                           rasterized=True)
         ax2.set_yticks(np.arange(nsc))
         #ax2.set_yticklabels(self.scenarios)
         ax2.set_yticklabels([])
@@ -622,18 +623,19 @@ class MDD():
             ax5.set_xlim(xlim)
             ax6.set_xlim(xlim)
 
-        plt.savefig("/media/fabian/Data/PhD/Presentations/Other/201905_Grenoble/Figures/mdd.pdf",
-                    format="pdf", bbox_inches="tight")
+        #plt.savefig("/media/fabian/Data/PhD/Presentations/Other/201905_Grenoble/Figures/mdd.pdf",
+        #            format="pdf", bbox_inches="tight")
         plt.show()
 
 
 
 
-    def plot_all_mdd_cc(self, sc, shift=True):
+    def plot_all_mdd_cc(self, scs, shift=True):
         """
-        All MDD and CC results are displayed
-        :param sc: scenario, which is displayed
-        :param shift: if shift, causal part is shown in right half of seismogram
+        All MDD and CC results are displayed.
+
+        :param scs: scenarios (list), which are displayed.
+        :param shift: if shift, causal part is shown in right half of seismogram.
         :return: no data is returned; plot is displayed
         """
         # time vector and data
@@ -641,35 +643,42 @@ class MDD():
             time = self.t_acaus
         else:
             time = self.t_caus
-        GdR = self.res_mdd[sc]
-        ccf = self.res_cc[sc]
         # plotting
-        fig = plt.figure(figsize=(14,14))
+        fig = plt.figure(figsize=(11, 14))
         ax1 = fig.add_subplot(121)
         ax2 = fig.add_subplot(122)
-        for i in range(len(self.recs[sc])):
-            # MDD responses
-            d_mdd = GdR[i, :]
-            if shift:
-                d_mdd = np.fft.ifftshift(d_mdd)
-            d_mdd -= np.mean(d_mdd)
-            d_mdd /= d_mdd.max() * 1.5
-            d_mdd += (i + 1)
-            ax1.plot(time, d_mdd, "b", lw=0.7)
-            # CC responses
-            d_cc = ccf[i, :]
-            if shift:
-                d_cc = np.fft.ifftshift(d_cc)
-            d_cc /= d_cc.max() * 1.5
-            d_cc -= np.mean(d_cc)
-            d_cc += (i + 1)
-            ax1.plot(time, d_cc, "r", lw=0.7)
+
+        for i, sc in enumerate(scs):
+            GdR = self.res_mdd[sc]
+            ccf = self.res_cc[sc]
+            for j in range(len(self.recs[sc])):
+                # MDD responses
+                d_mdd = GdR[j, :]
+                if shift:
+                    d_mdd = np.fft.ifftshift(d_mdd)
+                d_mdd -= np.mean(d_mdd)
+                d_mdd /= d_mdd.max() * 1.5
+                d_mdd += (j + 1)
+                ax2.plot(time, d_mdd, "C%i" % i, lw=0.7)
+                # CC responses
+                d_cc = ccf[j, :]
+                if shift:
+                    d_cc = np.fft.ifftshift(d_cc)
+                d_cc /= d_cc.max() * 1.5
+                d_cc -= np.mean(d_cc)
+                d_cc += (j + 1)
+                ax1.plot(time, d_cc, "C%i" % i, lw=0.7)
+
         nrec = len(self.recs[sc])
         ax1.set_xlim(-2, 2)
         ax1.set_ylim(0, nrec + 1)
+        ax1.axvline(0, color="k")
         plt.yticks(np.arange(len(self.recs[sc]))+1, self.recs[sc])
         ax2.set_xlim(-2, 2)
         ax2.set_ylim(0, nrec + 1)
+        for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
+            ax2.axvline(d / 1650)
+        ax2.axvline(0, color="k")
         plt.yticks(np.arange(len(self.recs[sc]))+1, self.recs[sc])
         plt.show()
 
