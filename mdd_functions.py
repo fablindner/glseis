@@ -4,7 +4,7 @@ from glseis.filter import ricker
 from glseis.quantity import stretch
 import scipy.signal as signal
 import matplotlib.pyplot as plt
-import msnoise_move2obspy as msnoise
+import glseis.msnoise_move2obspy as msnoise
 import warnings
 import os
 
