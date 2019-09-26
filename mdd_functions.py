@@ -4,7 +4,7 @@ from glseis.filter import ricker
 from glseis.quantity import stretch
 import scipy.signal as signal
 import matplotlib.pyplot as plt
-# import msnoise_move2obspy as msnoise
+import msnoise_move2obspy as msnoise
 import warnings
 import os
 
@@ -36,15 +36,15 @@ def preprocessing(data, path, muteP, fs, fmin=5, fmax=30):
     return data
 
 
-def calculate_CCF_PSF(Gt, GSt, fs):
+def calculate_CCF_PSF(Gt, GSt, fs, whiten=(None, None)):
     """
-    Calculate the frequency-domain cross-correlation and point-spread
-        functions for MDD applications.
+    Calculate the frequency-domain cross-correlation and point-spread functions for MDD applications.
 
     :param Gt: Matrix holding the time series of the single center receiver.
         Shape must be (# sources, # time samples).
     :param GSt: Matrix holding the time series of the boundary receivers.
         Shape must be (# sources, # receivers, # time samples).
+    :param whiten: Spectral whitening in the given tuple-range.
     :param fs: sampling frequency.
     """
     # get number of sources and number of receivers, and number of time samples
@@ -58,12 +58,18 @@ def calculate_CCF_PSF(Gt, GSt, fs):
     # central receiver
     G = np.zeros((num_src, freqs.size), dtype=complex)
     for s in range(num_src):
-        G[s, :] = np.fft.rfft(Gt[s, :], norm="ortho")
+        if whiten[0] is None:
+            G[s, :] = np.fft.rfft(Gt[s, :], norm="ortho")
+        else:
+            G[s, :] = msnoise.whiten(Gt[s, :], npts, 1./fs, whiten[0], whiten[1])
     # chain receivers
     GS = np.zeros((num_src, num_rec, freqs.size), dtype=complex)
     for s in range(num_src):
         for r in range(num_rec):
-            GS[s, r, :] = np.fft.rfft(GSt[s, r, :], norm="ortho")
+            if whiten[0] is None:
+                GS[s, r, :] = np.fft.rfft(GSt[s, r, :], norm="ortho")
+            else:
+                GS[s, r, :] = msnoise.whiten(GSt[s, r, :], npts, 1./fs, whiten[0], whiten[1])
 
     # compute cross-correlation function and point-spread function
     print("Calculate cross-correlation function and point-spread function ...")
