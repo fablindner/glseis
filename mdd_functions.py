@@ -254,10 +254,13 @@ class MDD():
                 buff_mdd = np.fft.irfft(GR[r, :], norm="ortho")
                 buff_cc = np.fft.irfft(C[r, :], norm="ortho")
                 if self.filt:
-                    GdR[r, :] = bandpass(buff_mdd, self.fmin, self.fmax,
-                                         self.fs, corners=5, zerophase=True)
-                    ccf[r, :] = bandpass(buff_cc, self.fmin, self.fmax,
-                                         self.fs, corners=5, zerophase=True)
+                    # shifting back and forth is the ugly solution to prevent filter problems.
+                    GdR_bndp = bandpass(np.fft.ifftshift(buff_mdd), self.fmin, self.fmax,
+                                        self.fs, corners=5, zerophase=True)
+                    GdR[r, :] = np.fft.ifftshift(GdR_bndp)
+                    ccf_bndp = bandpass(np.fft.ifftshift(buff_cc), self.fmin, self.fmax,
+                                        self.fs, corners=5, zerophase=True)
+                    ccf[r, :] = np.fft.ifftshift(ccf_bndp)
                 else:
                     GdR[r, :] = buff_mdd
                     ccf[r, :] = buff_cc
@@ -499,6 +502,7 @@ class MDD():
         # create figure
         fig = plt.figure(figsize=(8, 6))
         ax1 = fig.add_subplot(211)
+        plt.grid()
         ax2 = fig.add_subplot(212)
         count = 0
         # loop over scenarios and plot waveforms
@@ -527,8 +531,9 @@ class MDD():
                 ax.set_ylabel("Amplitude")
         ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
-        for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
-            ax.axvline(d / 1650)
+        #for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
+        #    ax.axvline(d / 1650)
+        plt.grid()
         plt.show()
 
 
@@ -602,12 +607,6 @@ class MDD():
         ax3.set_ylabel("Day of deployment")
 
         ax4 = fig.add_axes([0.55,0.1,0.4,0.55])
-        #ax4.axvline(0.61, lw=0.4)
-        #ax4.axvline(1.25, lw=0.4)
-        ax4.axvline(0.0621, lw=0.4)
-        ax4.axvline(0.559, lw=0.4)
-        ax4.axvline(0.683, lw=0.4)
-        ax4.axvline(1.189, lw=0.4)
         for i in range(nsc):
             ax4.plot(time, d_mdd[i,:] + i, "k", lw=0.6)
         ax4.axvline(0, color="r", linestyle="--", lw=1)
