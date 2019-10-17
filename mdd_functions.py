@@ -5,6 +5,7 @@ from glseis.quantity import stretch
 import scipy.signal as signal
 import matplotlib.pyplot as plt
 import glseis.msnoise_move2obspy as msnoise
+from collections import OrderedDict
 import warnings
 import os
 
@@ -281,7 +282,37 @@ class MDD():
             np.savez(self.scenarios[key] + "RESP_freq_resp_time_epssq_MDD_%s.npz"
                      % self.bnds[:4], GR, self.freqs, GdR, time, self.epssq)
 
-    def calc_stack(self):
+    def stack_scenarios(self, nsc, nsc_delay):
+        """Stack responses in a sliding window.
+
+        :param nsc: number of scenarios to stack (length of sliding window).
+        :param nsc_delay: number of scenarios to move on for next window.
+        """
+        keys = list(self.scenarios.keys())
+        scenarios_stacks = OrderedDict()
+        # sliding window of length nsc with delay of nsc_delay scenarios
+        for i in range(0, len(keys) - nsc, nsc_delay):
+            # caluclate the stack in the sliding window
+            mdd_res = [self.res_mdd[key] for key in keys[i: i+nsc]]
+            ccf_res = [self.res_cc[key] for key in keys[i: i+nsc]]
+            #mdd_stack = np.average(np.stack(self.res_mdd[keys[i: i+nsc]]), axis=0)
+            #ccf_stack = np.average(np.stack(self.res_cc[keys[i: i+nsc]]), axis=0)
+            # create new key based on icequake numbers
+            new_key = "iqs_%s-%s" % (keys[i].split("_")[1][:5],
+                                     keys[i+nsc].split("-")[1][:5])
+            # update results with stacks
+            self.res_mdd.update({new_key: np.average(np.stack(mdd_res), axis=0)})
+            self.res_cc.update({new_key: np.average(np.stack(ccf_res), axis=0)})
+            # update scenarios list
+            scenarios_stacks[new_key] = "dummy_path"   # this should be fixed
+        # delete (unstacked) scenarios
+        for key in keys:
+            del self.res_mdd[key]
+            del self.res_cc[key]
+        # overwrite old scenarios_stacks
+        self.scenarios = scenarios_stacks
+
+    def stack_all(self):
         """Calculate the stack from all scenarios and save it."""
         if "stack" not in self.scenarios:
             mdd_res = [self.res_mdd[key] for key in self.scenarios]
@@ -532,8 +563,9 @@ class MDD():
         ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
         #for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
-        #    ax.axvline(d / 1650)
+        #    ax.axvline(d / 1610)
         plt.grid()
+        plt.savefig("/home/fabian/Downloads/figure_mdd.png")
         plt.show()
 
 
