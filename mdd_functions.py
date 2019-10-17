@@ -267,8 +267,10 @@ class MDD():
                     ccf[r, :] = buff_cc
             # corresponding time vector
             # acausal part in left half of seismogram
-            time = np.linspace(-(self.npts/2.)*self.dt, (self.npts/2.)*self.dt,
-                               num=self.npts)
+            #time = np.linspace(-(self.npts/2.)*self.dt, (self.npts/2.)*self.dt,
+            #                   num=self.npts)
+            time = np.arange(self.npts) * self.dt
+            time -= np.average(time)
             self.t_acaus = time
             # causal part in left half of seismogram
             time_ = time + abs(time).max() + abs(time).min()
