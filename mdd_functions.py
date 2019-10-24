@@ -267,8 +267,6 @@ class MDD():
                     ccf[r, :] = buff_cc
             # corresponding time vector
             # acausal part in left half of seismogram
-            #time = np.linspace(-(self.npts/2.)*self.dt, (self.npts/2.)*self.dt,
-            #                   num=self.npts)
             time = np.arange(self.npts) * self.dt
             time -= np.average(time)
             self.t_acaus = time
@@ -564,8 +562,8 @@ class MDD():
                 ax.set_ylabel("Amplitude")
         ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
-        #for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
-        #    ax.axvline(d / 1610)
+        for d in [100, 900, 1100]:
+            ax.axvline(d / 1600)
         plt.grid()
         plt.savefig("/home/fabian/Downloads/figure_mdd.png")
         plt.show()
