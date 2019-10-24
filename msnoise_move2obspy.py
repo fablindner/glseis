@@ -113,7 +113,7 @@ def whiten(data, Nfft, delta, freqmin, freqmax, plot=False):
 
     Napod = 100
     Nfft = int(Nfft)
-    freqVec = scipy.fftpack.rfftfreq(Nfft, d=delta)
+    freqVec = np.fft.rfftfreq(Nfft, d=delta)
 
     J = np.where((freqVec >= freqmin) & (freqVec <= freqmax))[0]
     low = J[0] - Napod
@@ -126,7 +126,7 @@ def whiten(data, Nfft, delta, freqmin, freqmax, plot=False):
     #if high > Nfft / 2:
     #    high = int(Nfft // 2)
 
-    FFTRawSign = scipy.fftpack.rfft(data, Nfft)
+    FFTRawSign = np.fft.rfft(data, Nfft)
 
     if plot:
         plt.subplot(412)
@@ -168,7 +168,7 @@ def whiten(data, Nfft, delta, freqmin, freqmax, plot=False):
         plt.plot(axis, np.abs(FFTRawSign))
         plt.xlim(0, max(axis))
 
-        wdata = np.real(scipy.fftpack.ifft(FFTRawSign, Nfft))
+        wdata = np.real(np.fft.irfft(FFTRawSign, Nfft))
         plt.subplot(414)
         plt.plot(np.arange(len(wdata)) * delta, wdata)
         plt.xlim(0, len(wdata) * delta)
