@@ -299,7 +299,7 @@ class MDD():
             #ccf_stack = np.average(np.stack(self.res_cc[keys[i: i+nsc]]), axis=0)
             # create new key based on icequake numbers
             new_key = "iqs_%s-%s" % (keys[i].split("_")[1][:5],
-                                     keys[i+nsc].split("-")[1][:5])
+                                     keys[i+nsc-1].split("-")[1][:5])
             # update results with stacks
             self.res_mdd.update({new_key: np.average(np.stack(mdd_res), axis=0)})
             self.res_cc.update({new_key: np.average(np.stack(ccf_res), axis=0)})
@@ -562,10 +562,10 @@ class MDD():
                 ax.set_ylabel("Amplitude")
         ax2.set_xlabel("Lag Time (s)")
         #plt.savefig("/home/fabian/Desktop/Plots/epssq_%.9f.png" % epssq)
-        for d in [100, 900, 1100]:
+        for d in [250, 750, 1250]:
             ax.axvline(d / 1600)
         plt.grid()
-        plt.savefig("/home/fabian/Downloads/figure_mdd.png")
+        plt.savefig("/home/flindner/argentiere/MDD/figure_mdd.png", dpi=500)
         plt.show()
 
 
@@ -668,6 +668,7 @@ class MDD():
 
         #plt.savefig("/media/fabian/Data/PhD/Presentations/Other/201905_Grenoble/Figures/mdd.pdf",
         #            format="pdf", bbox_inches="tight")
+        plt.savefig("/home/flindner/argentiere/MDD/waveform_matrix.png", dpi=500)
         plt.show()
 
 
@@ -719,8 +720,8 @@ class MDD():
         plt.yticks(np.arange(len(self.recs[sc]))+1, self.recs[sc])
         ax2.set_xlim(-2, 2)
         ax2.set_ylim(0, nrec + 1)
-        for d in [200, 500, 900, 1200, 1600, 1900, 2400]:
-            ax2.axvline(d / 1650)
+        for d in [250, 750, 1250]:
+            ax2.axvline(d / 1610)
         ax2.axvline(0, color="k")
         plt.yticks(np.arange(len(self.recs[sc]))+1, self.recs[sc])
         plt.show()
