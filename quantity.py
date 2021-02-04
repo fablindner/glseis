@@ -54,7 +54,7 @@ def stretch(t, data, ref_data, dvv, win, plot=False):
 
 
 
-def disp_curves(z_theo, z_func, dx_sensor):
+def disp_curves(z_theo, z_func, dx_sensor, structure=False):
 
     """
     Calculates dispersion curves based on Aki (1957). Fits the zeros of
@@ -75,23 +75,26 @@ def disp_curves(z_theo, z_func, dx_sensor):
     for i in range(nzt):
         disp_[i,:] = z_func * dx_sensor / z_theo[i]
 
-    # convert matrix: diagonals (dispersion curves) --> rows of new matrix
-    ndisp = nzt + nzf - 1
-    disp = np.zeros((ndisp, nzf))
-    if nzt >= nzf:
-        offset = -nzt + 1
-        s = 1
-    else:
-        offset = nzf - 1
-        s = -1
-    for i in range(ndisp):
-        offset_ = offset + s*i
-        diag = np.diagonal(disp_, offset=offset_)
-        if offset_ < 0:
-            disp[i, :len(diag)] = diag
+    if structure:
+        # convert matrix: diagonals (dispersion curves) --> rows of new matrix
+        ndisp = nzt + nzf - 1
+        disp = np.zeros((ndisp, nzf))
+        if nzt >= nzf:
+            offset = -nzt + 1
+            s = 1
         else:
-            disp[i, -len(diag):] = diag
-    disp[disp == 0.] = np.nan
+            offset = nzf - 1
+            s = -1
+        for i in range(ndisp):
+            offset_ = offset + s*i
+            diag = np.diagonal(disp_, offset=offset_)
+            if offset_ < 0:
+                disp[i, :len(diag)] = diag
+            else:
+                disp[i, -len(diag):] = diag
+        disp[disp == 0.] = np.nan
+    else:
+        disp = np.copy(disp_)
     freq = z_func / (2. * np.pi)
     return freq, disp
 
@@ -146,7 +149,7 @@ def fit_smith_dahlen(baz, vel, errors=None, four_theta=True):
     :param errors: data errors. If provided, weighted least squares is performed.
     :param four_theta: if True, five parameter fit (including 4 theta
         component). Otherwise only three parameter fit.
-    :return: the model parameters describing anisotropy 
+    :return: the model parameters describing anisotropy
     """
     nvals = baz.size
     if four_theta:
