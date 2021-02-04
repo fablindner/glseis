@@ -148,7 +148,7 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     dmax = 3 * d[d>0].max()
 
     # plot
-    fig = plt.figure(figsize=(16, 8))
+    fig = plt.figure(figsize=(10, 3.65))
     # array geometry
     ax1 = fig.add_subplot(121)
     ax1.plot(easting, northing, "kv", markersize=12)
@@ -162,28 +162,33 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     ax1.set_ylim(northing.min()-50., northing.max()+50.)
     # array response
     ax2 = fig.add_subplot(122)
-    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.2, vmax=1., cmap="viridis")
+    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.0, vmax=1., cmap="viridis",
+                        rasterized=True)
     if show_greater_thresh:
         ax2.plot(ky[gr_thresh[1]], kx[gr_thresh[0]], "r.", alpha=0.6, label="> %.2f" % thresh)
     cbar = plt.colorbar(im)
     cbar.set_label("Beam Power")
-    ax2.set_xlabel("kx (rad/m)")
-    ax2.set_ylabel("ky (rad/m)")
+    ax2.set_xlabel("wavenumber $k_x$ (rad/m)")
+    ax2.set_ylabel("wavenumber $k_y$ (rad/m)")
     an = np.linspace(0, 2 * np.pi, 100)
     ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--",
-             label="min lambda: %i m" % lambdamin)
+            label="$k_{max}$: $\lambda$=%im" % lambdamin)
     ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w",
-             label="max lambda: %i m" % lambdamax)
-    legend = plt.legend()
+            label="$k_{min}$: $\lambda$=%im" % lambdamax)
+    legend = plt.legend(loc=1, labelspacing=0, borderpad=0.2)
     frame = legend.get_frame()
     frame.set_facecolor('0.70')
     ax2.set_xlim(-kmax, kmax)
     ax2.set_ylim(-kmax, kmax)
-    ax2.set_title("Array Response")
+    ax2.set_title("Theoretical array response", fontsize=10)
+    plt.axis("equal")
     # runtime
     t2 = UTCDateTime()
     print("runtime: %.1f s" % (t2 - t1))
+    plt.savefig("/home/fabian/Downloads/array_response.pdf", format="pdf",
+                bbox_inches="tight")
     plt.show()
+
 
 
 def annul_dominant_interferers(CSDM, neig, data):
