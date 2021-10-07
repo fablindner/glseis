@@ -86,7 +86,8 @@ def transfer_function(u, freq, easting, northing, elevation):
     plt.show()
 
 
-def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=False):
+def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=False,
+        outfile=None):
     """
     Function to calculate the array response function as in Wathelet et al., 2008 (J.Seismol.).
     Also calculates the resolution limits in terms of wavelengths as discussed in the paper.
@@ -96,6 +97,7 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     :param kmax: Maximum wavenumber considered.
     :param kstep: Step in wavenumber.
     :param show_greater_thresh:
+    :param outfile: File name for saving plot.
     """
     # runtime
     t1 = UTCDateTime()
@@ -151,18 +153,19 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     fig = plt.figure(figsize=(10, 3.65))
     # array geometry
     ax1 = fig.add_subplot(121)
-    ax1.plot(easting, northing, "kv", markersize=12)
-    ax1.text(easting.min(), northing.min() - 30, "Tokimatsu (1997): %.1f m < $\lambda$ < %.1f m"\
-             % (dmin, dmax),
-             fontsize=14)
+    ax1.plot(easting, northing, "kv", markersize=12, mec="silver")
+    ax1.text(0.05, 0.9, "Tokimatsu (1997): %.1f m < $\lambda$ < %.1f m" % (dmin, dmax),
+             transform=ax1.transAxes, fontsize=10)
     ax1.set_xlabel("Easting (m)")
     ax1.set_ylabel("Northing (m)")
     ax1.set_title("Array Geometry")
     ax1.set_xlim(easting.min()-50., easting.max()+50.)
     ax1.set_ylim(northing.min()-50., northing.max()+50.)
+    plt.axis("equal")
     # array response
     ax2 = fig.add_subplot(122)
-    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.0, vmax=1., cmap="viridis",
+    #Rth = np.ma.masked_where(Rth < thresh, Rth)
+    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.0, vmax=1., cmap="CMRmap",
                         rasterized=True)
     if show_greater_thresh:
         ax2.plot(ky[gr_thresh[1]], kx[gr_thresh[0]], "r.", alpha=0.6, label="> %.2f" % thresh)
@@ -185,8 +188,8 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     # runtime
     t2 = UTCDateTime()
     print("runtime: %.1f s" % (t2 - t1))
-    plt.savefig("/home/fabian/Downloads/array_response.pdf", format="pdf",
-                bbox_inches="tight")
+    if outfile is not None:
+        plt.savefig(outfile, format=outfile.split(".")[-1], bbox_inches="tight")
     plt.show()
 
 
