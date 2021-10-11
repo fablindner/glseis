@@ -106,39 +106,43 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     kymax = kmax
     kx = np.arange(-kxmax, kxmax + kstep, kstep)
     ky = np.arange(-kymax, kymax + kstep, kstep)
+    KX, KY = np.meshgrid(kx, ky)
     # threshold for kmin and kmax
-    thresh = 0.49
+    thresh = 0.5
     # initialize and calculate the array response
     # -> compare with Wathelet (2008), equation 3
-    Rth = np.zeros((kx.size, ky.size))
-    for i in range(kx.size):
-        for j in range(ky.size):
-            sum_rth = 0.
-            for k in range(easting.size):
-                sum_rth += np.exp(-1j * (kx[i] * easting[k] + ky[j] * northing[k]))
-            Rth[i, j] = abs(sum_rth) ** 2 / float(easting.size) ** 2
+    sum_rth = np.zeros(KX.shape, dtype=complex) 
+    for i in range(easting.size):
+        sum_rth += np.exp(-1j * (KX * easting[i] + KY * northing[i]))
+    Rth = abs(sum_rth) ** 2 / float(easting.size) ** 2
+    Rth = np.round_(Rth, decimals=2)
 
-    # get response values greater than the threshold and calclate corresponding k values
-    gr_thresh = np.where(Rth > thresh)
-    k_gr_thresh = np.zeros(gr_thresh[0].size)
-    for l in range(gr_thresh[0].size):
-        k_gr_thresh[l] = np.sqrt(kx[gr_thresh[1][l]] ** 2 + ky[gr_thresh[0][l]] ** 2)
-    # distribution of k values greater than the threshold
-    hist, bins = np.histogram(k_gr_thresh, bins=int(kx.size / 2))
-    # obtain the two threshold values (see Wathelet, 2008)
-    k_thresh = []
-    first_peak = True  # corresponds to zero slowness
-    for b in range(hist.size - 1):
-        if hist[b] > 0 and hist[b + 1] == 0:
-            k_thresh.append((bins[b] + bins[b + 1]) / 2.)
-            first_peak = False
-        if hist[b] == 0 and hist[b + 1] > 0 and not first_peak:
-            k_thresh.append((bins[b] + bins[b + 1]) / 2.)
-    min_wvnmbr = k_thresh[0]
-    max_wvnmbr = k_thresh[1]
-    # calculate corresponding wavelengths
-    lambdamin = 2. * np.pi / max_wvnmbr
-    lambdamax = 2. * np.pi / min_wvnmbr
+    # get distance to smallest 0.5 value from center
+    KX_thresh = np.ma.masked_where(Rth != thresh, KX)
+    KY_thresh = np.ma.masked_where(Rth != thresh, KY)
+    kmin = np.sqrt(KX_thresh**2 + KY_thresh**2).min()
+
+    ## get response values greater than the threshold and calclate corresponding k values
+    #gr_thresh = np.where(Rth > thresh)
+    #k_gr_thresh = np.zeros(gr_thresh[0].size)
+    #for l in range(gr_thresh[0].size):
+    #    k_gr_thresh[l] = np.sqrt(kx[gr_thresh[1][l]] ** 2 + ky[gr_thresh[0][l]] ** 2)
+    ## distribution of k values greater than the threshold
+    #hist, bins = np.histogram(k_gr_thresh, bins=int(kx.size / 2))
+    ## obtain the two threshold values (see Wathelet, 2008)
+    #k_thresh = []
+    #first_peak = True  # corresponds to zero slowness
+    #for b in range(hist.size - 1):
+    #    if hist[b] > 0 and hist[b + 1] == 0:
+    #        k_thresh.append((bins[b] + bins[b + 1]) / 2.)
+    #        first_peak = False
+    #    if hist[b] == 0 and hist[b + 1] > 0 and not first_peak:
+    #        k_thresh.append((bins[b] + bins[b + 1]) / 2.)
+    #min_wvnmbr = k_thresh[0]
+    #max_wvnmbr = k_thresh[1]
+    ## calculate corresponding wavelengths
+    #lambdamin = 2. * np.pi / max_wvnmbr
+    #lambdamax = 2. * np.pi / min_wvnmbr
 
     # distance between stations
     d = np.zeros((easting.size, easting.size))
@@ -151,6 +155,7 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
 
     # plot
     fig = plt.figure(figsize=(10, 3.65))
+
     # array geometry
     ax1 = fig.add_subplot(121)
     ax1.plot(easting, northing, "kv", markersize=12, mec="silver")
@@ -162,11 +167,16 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     ax1.set_xlim(easting.min()-50., easting.max()+50.)
     ax1.set_ylim(northing.min()-50., northing.max()+50.)
     plt.axis("equal")
+
     # array response
     ax2 = fig.add_subplot(122)
-    #Rth = np.ma.masked_where(Rth < thresh, Rth)
-    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.0, vmax=1., cmap="CMRmap",
+    im = ax2.pcolormesh(kx - kstep / 2., ky - kstep / 2., Rth, vmin=0.0, vmax=1., cmap="viridis",
                         rasterized=True)
+    ax2.contour(KX, KY, Rth, colors="k", levels=[0.5], linewidths=0.8)
+    levels = 2. * np.pi / np.linspace(kmin, kmax, 6)
+    cs = ax2.contour(KX, KY, 2. * np.pi / np.sqrt(KX**2 + KY**2), colors="w",
+            levels=levels[::-1], linewidths=0.8, linestyles="--")
+    ax2.clabel(cs, fontsize=9, inline=True, fmt="%i")
     if show_greater_thresh:
         ax2.plot(ky[gr_thresh[1]], kx[gr_thresh[0]], "r.", alpha=0.6, label="> %.2f" % thresh)
     cbar = plt.colorbar(im)
@@ -174,13 +184,13 @@ def array_response_wathelet(easting, northing, kmax, kstep, show_greater_thresh=
     ax2.set_xlabel("wavenumber $k_x$ (rad/m)")
     ax2.set_ylabel("wavenumber $k_y$ (rad/m)")
     an = np.linspace(0, 2 * np.pi, 100)
-    ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--",
-            label="$k_{max}$: $\lambda$=%im" % lambdamin)
-    ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w",
-            label="$k_{min}$: $\lambda$=%im" % lambdamax)
-    legend = plt.legend(loc=1, labelspacing=0, borderpad=0.2)
-    frame = legend.get_frame()
-    frame.set_facecolor('0.70')
+    #ax2.plot(max_wvnmbr * np.cos(an), max_wvnmbr * np.sin(an), "w--",
+    #        label="$k_{max}$: $\lambda$=%im" % lambdamin)
+    #ax2.plot(min_wvnmbr * np.cos(an), min_wvnmbr * np.sin(an), "w",
+    #        label="$k_{min}$: $\lambda$=%im" % lambdamax)
+    #legend = plt.legend(loc=1, labelspacing=0, borderpad=0.2)
+    #frame = legend.get_frame()
+    #frame.set_facecolor('0.70')
     ax2.set_xlim(-kmax, kmax)
     ax2.set_ylim(-kmax, kmax)
     ax2.set_title("Theoretical array response", fontsize=10)
